@@ -85,9 +85,28 @@ if __name__ == "__main__":
 
 
 '''
-python src/main.py --exp svm --dataset_name "kauhc" --model_name mobilenet_v2 --epochs 10 --train --eval
-python src/main.py --exp svm --dataset_name "kauhc" --model_name svm --train --eval
-python src/main.py --exp svm --dataset_name "kauhc" --model_name resnet50 --epochs 10 --train --eval
-python src/main.py --exp svm --dataset_name "kauhc" --model_name decision_tree --epochs 10 --train --eval
+python main.py --exp alexnet --dataset_name "kauhc" --model_name alexnet --epochs 100
+python main.py --exp densenet121 --dataset_name "kauhc" --model_name densenet121 --epochs 100
+python main.py --exp densenet201 --dataset_name "kauhc" --model_name densenet201 --epochs 100
+python main.py --exp efficientnet_b0 --dataset_name "kauhc" --model_name efficientnet_b0 --epochs 100
+python main.py --exp efficientnet_b7 --dataset_name "kauhc" --model_name efficientnet_b7 --epochs 100
+python main.py --exp googlenet --dataset_name "kauhc" --model_name googlenet --epochs 100
+python main.py --exp inception_v3 --dataset_name "kauhc" --model_name inception_v3 --epochs 100
+python main.py --exp resnet50 --dataset_name "kauhc" --model_name resnet50 --epochs 100
+python main.py --exp resnet152 --dataset_name "kauhc" --model_name resnet152 --epochs 100
+python main.py --exp vgg16 --dataset_name "kauhc" --model_name vgg16 --epochs 100
+python main.py --exp vgg19 --dataset_name "kauhc" --model_name vgg19 --epochs 100
+
+python main.py --exp logistic_regression --dataset_name "kauhc" --model_name logistic_regression
+python main.py --exp decision_tree --dataset_name "kauhc" --model_name decision_tree
+python main.py --exp random_forest --dataset_name "kauhc" --model_name random_forest
+python main.py --exp svm --dataset_name "kauhc" --model_name svm
+python main.py --exp knn --dataset_name "kauhc" --model_name knn
+python main.py --exp naive_bayes --dataset_name "kauhc" --model_name naive_bayes
+python main.py --exp gbm --dataset_name "kauhc" --model_name gbm
+python main.py --exp adaboost --dataset_name "kauhc" --model_name adaboost
+python main.py --exp lda --dataset_name "kauhc" --model_name lda
+python main.py --exp qda --dataset_name "kauhc" --model_name qda
+python main.py --exp mlp --dataset_name "kauhc" --model_name mlp
 
 '''
