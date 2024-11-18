@@ -11,8 +11,11 @@ scikit-learn = "*"
 matplotlib = "*"
 pandas = "*"
 split-folders = "*"
+seaborn = "*"
+tqdm = "*"
 
 [dev-packages]
+ipykernel = "*"
 
 [requires]
 python_version = "3.10"

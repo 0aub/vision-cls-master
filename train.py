@@ -5,17 +5,17 @@ from torch.optim import Adam
 from datetime import datetime
 import numpy as np
 import pandas as pd
+import pickle
 import copy
 import time
 import os
 
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import confusion_matrix
-from joblib import dump, load
 
 from datasets import ImageDataset
 from modules import pretrained_network, get_ml_model
-from utils import cm_plot, cm_to_dict, performance_report
+from utils import plot_confusion_matrix, cm_to_dict, performance_report
 
 class Config(dict):
     def __init__(self, config):
@@ -68,7 +68,7 @@ class Config(dict):
         if self.model_type == 'dl':
             self.model_save_path = os.path.join(self.log_path, 'best.pth')
         else:
-            self.model_save_path = os.path.join(self.log_path, 'best.joblib')
+            self.model_save_path = os.path.join(self.log_path, 'best.pkl')
 
         # Create folders if they don't exist
         os.makedirs(self.log_path, exist_ok=True)
@@ -181,7 +181,7 @@ class Trainer:
                     self.log('\n[INFO]  Saved:  ', self.config.history_save_path)
 
             if self.config.eval:
-                print(f"[INFO]  Loading best model from {self.config.model_save_path}")
+                print(f"\n[INFO]  Loading best model from {self.config.model_save_path}")
                 self.model = torch.load(self.config.model_save_path, map_location=self.device)
                 if len(self.config.split_ratio) == 3:
                     loader = self.dataset.dataloaders['test']
@@ -195,20 +195,17 @@ class Trainer:
                 with open(self.config.eval_save_path, "+w") as f:
                     f.write(txt)
 
-                cm_plot(self.model, self.dataset, self.config.cm_save_path)
-
-
     def run_ml(self):
         self.log('*' * 50)
         self.log(f"{'':50} model name:    {self.config.model_name.upper()}")
         self.log(f"{'':50} dataset name:  {self.config.dataset_name.upper()}")
         if self.config.cross_validation:
-            self.log(' '*50 + 'cv:            ' + 'True')
-            self.log(' '*50 + 'cv Splits:     ' + str(self.config.num_splits))
+            self.log(' '*50 + ' cv:            ' + 'True')
+            self.log(' '*50 + ' cv Splits:     ' + str(self.config.num_splits))
         self.log('*' * 50)
         
         self.eval_txt = "\n[INFO]  {} Results:\n       - Accuracy: {:.4f}\n       - Precision: {:.4f}\n       - Recall: {:.4f}\n       - F1 Score: {:.4f}\n"
-
+ 
         if self.config.cross_validation:
             if self.config.train:
                 splits = ['train', 'val']
@@ -232,7 +229,8 @@ class Trainer:
                     fold_results.append((accuracy, precision, recall, f1))
                     if self.config.save:
                         fold_model_path = os.path.join(self.log_path, f'fold_{fold}.joblib')
-                        dump(self.model, fold_model_path)
+                        with open(fold_model_path, 'wb') as file:
+                            pickle.dump(self.model, file)
                         self.log(f"\n[INFO]  Fold {fold} saved: {fold_model_path}")
 
                 # Optional: Calculate and print average metrics across all folds
@@ -245,16 +243,17 @@ class Trainer:
             if self.config.eval:
                 eval_results = []
                 if len(self.config.split_ratio) == 3:
-                    x_test, y_test = self.prepare_set_ml('test')
+                    x_test, y_test = self.dataset.prepare_set_ml('test')
                     self.log('\n\n[INFO]  Model Evaluation using test set...')
                 else:
-                    x_test, y_test = self.prepare_set_ml('val')
+                    x_test, y_test = self.dataset.prepare_set_ml('val')
                     self.log('\n\n[INFO]  Model Evaluation using val set...')
                 
                 # Load and evaluate each fold's model
                 for fold in range(1, self.config.num_splits + 1):
                     fold_model_path = os.path.join(self.log_path, f'fold_{fold}.joblib')
-                    self.model = load(fold_model_path)
+                    with open('model.pkl', 'rb') as file:
+                        self.model = pickle.load(fold_model_path)
                     accuracy, precision, recall, f1 = self.evaluate_ml(f"Fold {fold} Evaluation", x_test, y_test)
                     eval_results.append((accuracy, precision, recall, f1))
 
@@ -279,7 +278,8 @@ class Trainer:
                 self.log(f'\n[INFO]  Training ended in {str(int(time.time() - start_time))} seconds.')
 
                 if self.config.save:
-                    dump(self.model, self.config.model_save_path)
+                    with open(self.config.model_save_path, 'wb') as file:
+                        pickle.dump(self.model, file)
                     self.log('\n[INFO]  Saved:  ', self.config.model_save_path)
         
                 # Evaluate on training set
@@ -291,8 +291,8 @@ class Trainer:
 
                 # Evaluate on testing set
                 if 'test' in self.dataset.splits:
-                    X_test, y_test = self.prepare_ml_data('test')
-                    self.evaluate_ml("Training", X_test, y_test)
+                    X_test, y_test = self.dataset.prepare_set_ml('test')
+                    self.evaluate_ml("Testing", X_test, y_test)
                     
 
 
@@ -445,8 +445,10 @@ class Trainer:
         acc_test = acc_test / self.dataset.dataset_sizes['val']
 
         # calculate precision, recall, and f1
+        plot_confusion_matrix(cm, self.dataset.classes, normalize=True, title='', cm_save_path=self.config.cm_save_path)
         cm_dict = cm_to_dict(cm, self.dataset.classes)
         precision, recall, f1, _ = performance_report(cm_dict, mode = 'Macro')
+        
 
         # calculate training time
         elapsed_time = time.time() - since
@@ -454,15 +456,22 @@ class Trainer:
         return round(acc_test.item(), 4), round(precision.item(), 4), round(recall.item(), 4), round(f1.item(), 4), round(loss_test, 4)
     
     def evaluate_ml(self, set_name, X, y):
+        if hasattr(self.model, 'eval'):
+            self.model.eval()
+
         preds = self.model.predict(X)
         accuracy = self.model.score(X, y)
+
         cm = confusion_matrix(y, preds)
+        plot_confusion_matrix(cm, self.dataset.classes, normalize=True, title='', cm_save_path=self.config.cm_save_path)
         cm_dict = cm_to_dict(cm, self.dataset.classes)
         precision, recall, f1, _ = performance_report(cm_dict, mode='macro', printing=False)
+
         result_text = self.eval_txt.format(set_name, accuracy, precision, recall, f1)
+
         self.log(f'\n[INFO]  Evaluate on {set_name} set...')
         self.log(result_text)
-        with open(self.config.eval_save_path, "w") as f:
+        with open(self.config.eval_save_path, "a") as f:
             f.write(result_text)
         return (accuracy, precision, recall, f1)
 

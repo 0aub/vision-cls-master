@@ -3,7 +3,6 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-from sklearn.metrics import confusion_matrix
 
 def performance_report(cm, mode='macro', printing=False):
     col = len(cm)
@@ -83,30 +82,21 @@ def cm_to_dict(cm, labels):
         cm_dict[labels[i]] = row
     return cm_dict
 
-def cm_plot(model, dataset, cm_save_path):
-    device = next(model.parameters()).device
+def plot_confusion_matrix(cm, classes, normalize=False, title='Confusion matrix', cmap=plt.cm.Blues, cm_save_path=None):
+    if torch.is_tensor(cm):
+        cm = cm.cpu().numpy() 
+    
+    if normalize:
+        cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
 
-    model.eval()
-    # prediction
-    y_pred = []
-    y_true = []
-    for inputs, labels in dataset.dataloaders['val']:
-        output = model(inputs.to(device)) # Feed Network
-        output = (torch.max(torch.exp(output), 1)[1]).data.cpu().numpy()
-        y_pred.extend(output) # Save Prediction
-        labels = labels.data.cpu().numpy()
-        y_true.extend(labels) # Save Truth
-
-    # confusion matrix
-    cm = confusion_matrix(y_true, y_pred)
-    # normalize
-    cmn = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-    # to dataframe
-    df_cm = pd.DataFrame(cmn/np.sum(cmn) *10, index = [i for i in dataset.classes], columns = [i for i in dataset.classes])
-    # plot
-    fig, ax = plt.subplots(figsize=(10,10))
-    sns.heatmap(cmn, annot=True, fmt='.2f', xticklabels=dataset.classes, yticklabels=dataset.classes, cmap='Blues')
-    plt.ylabel('Actual')
+    plt.figure(figsize=(10, 10))
+    sns.heatmap(cm, annot=True, fmt=".2f" if normalize else "d", cmap=cmap,
+                xticklabels=classes, yticklabels=classes)
+    plt.title(title)
+    plt.ylabel('True')
     plt.xlabel('Predicted')
-    # plt.show(block=False)
-    plt.savefig(cm_save_path, dpi=360, bbox_inches='tight')
+    
+    if cm_save_path:
+        plt.savefig(cm_save_path, dpi=300, bbox_inches='tight')
+
+    plt.close()
