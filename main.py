@@ -13,7 +13,7 @@ def parse_args():
     parser.add_argument('--overwrite', type=bool, default=True, help='Overwrite existing logs')
 
     # Data and Preprocessing
-    parser.add_argument('--split_ratio', type=str, default='0.8,0.2', help='Train/val split ratio')
+    parser.add_argument('--split_ratio', type=str, default='0.8,0.1,0.1', help='Train/val split ratio')
     parser.add_argument('--batch_size', type=int, default=16, help='Batch size')
     parser.add_argument('--aug', type=bool, default=True, help='Enable data augmentation')
     parser.add_argument('--image_size', type=int, default=256, help='Image size')

@@ -64,7 +64,7 @@ class Config(dict):
         self.log_save_path = os.path.join(self.log_path, f'log.txt')
         self.args_save_path = os.path.join(self.log_path, f'args.txt')
         self.eval_save_path = os.path.join(self.log_path, f'eval.txt')
-        self.cm_save_path = os.path.join(self.log_path, f'cm.png')
+        self.cm_save_path = os.path.join(self.log_path, f'cm')
         if self.model_type == 'dl':
             self.model_save_path = os.path.join(self.log_path, 'best.pth')
         else:
@@ -173,27 +173,21 @@ class Trainer:
                 val_loader = self.dataset.dataloaders['val']
                 best_model_wts, history = self.train(train_loader, val_loader)
                 self.model.load_state_dict(best_model_wts)
+
                 if self.config.save:
-                    # save model and training history
-                    torch.save(self.model, self.config.model_save_path)
+                    torch.save(self.model.state_dict(), self.config.model_save_path)
                     pd.DataFrame.from_dict(history).to_csv(self.config.history_save_path, index=False)
-                    self.log('\n[INFO]  Saved:  ', self.config.model_save_path)
-                    self.log('\n[INFO]  Saved:  ', self.config.history_save_path)
+                    self.log(f"\n[INFO]  Saved Model and History at {self.config.model_save_path} and {self.config.history_save_path}")
 
             if self.config.eval:
-                print(f"\n[INFO]  Loading best model from {self.config.model_save_path}")
-                self.model = torch.load(self.config.model_save_path, map_location=self.device)
-                if len(self.config.split_ratio) == 3:
-                    loader = self.dataset.dataloaders['test']
-                    self.log('\n\n[INFO]  Model Evaluation using test loader...')
-                else:
-                    loader = self.dataset.dataloaders['val']
-                    self.log('\n\n[INFO]  Model Evaluation using val loader...')
-                accuracy, precision, recall, f1, loss = self.evaluate(loader)
-                txt = "\n\n[INFO]  Accuracy:  {:.4f}\n[INFO]  Precision: {:.4f}\n[INFO]  Recall:    {:.4f}\n[INFO]  F1 Score:  {:.4f}\n[INFO]  Loss:      {:.4f}\n".format(accuracy, precision, recall, f1, loss)
-                self.log(txt)
-                with open(self.config.eval_save_path, "+w") as f:
-                    f.write(txt)
+                self.log(f"\n[INFO]  Loading best model from {self.config.model_save_path}")
+                self.model.load_state_dict(torch.load(self.config.model_save_path, map_location=self.device))
+
+                # Evaluate on training, validation, and potentially test sets
+                for phase in ['train', 'val', 'test'] if len(self.config.split_ratio) == 3 else ['train', 'val']:
+                    loader = self.dataset.dataloaders[phase]
+                    self.log(f'\n\n[INFO]  Model Evaluation using {phase} loader...')
+                    self.evaluate(phase.capitalize(), loader)
 
     def run_ml(self):
         self.log('*' * 50)
@@ -264,7 +258,7 @@ class Trainer:
                 avg_f1 = np.mean([result[3] for result in eval_results])
                 summary_text = self.eval_txt.format("Cross-Validation Evaluation Summary - Avg Metrics", avg_accuracy, avg_precision, avg_recall, avg_f1)
                 self.log(summary_text)
-                with open(self.config.eval_save_path, "w") as f:
+                with open(self.config.eval_save_path, "a") as f:
                     f.write(summary_text)
         else:
             if self.config.train:
@@ -294,7 +288,6 @@ class Trainer:
                     X_test, y_test = self.dataset.prepare_set_ml('test')
                     self.evaluate_ml("Testing", X_test, y_test)
                     
-
 
     def train(self, train_loader, val_loader):
         # history dict
@@ -411,50 +404,59 @@ class Trainer:
         
         return best_model_wts, history
 
-    def evaluate(self, test_loader):
+    def evaluate(self, set_name, loader):
         # initial variables
         since = time.time()
         loss_test = 0
         acc_test = 0
         cm = torch.zeros(len(self.dataset.classes), len(self.dataset.classes))
         # testing iterations
-        for i, data in enumerate(test_loader):
-            # set model training status to False for the evaluation
-            self.model.train(False)
-            self.model.eval()
-            # extract images and labels
+        for i, data in enumerate(loader):
+            self.model.eval()  # Set model to evaluation mode
             inputs, labels = data
             inputs = inputs.to(self.device, dtype=torch.float)
             labels = labels.to(self.device, dtype=torch.long)
-            # predictions
-            outputs = self.model(inputs)
-            _, preds = torch.max(outputs.data, 1)
-            # calculate loss
-            loss = self.criterion(outputs, labels)
-            # calculate testing loss and accuracy
-            loss_test += loss.item()
+
+            # predictions and calculate loss
+            with torch.no_grad():  # Turn off gradients for evaluation
+                outputs = self.model(inputs)
+                _, preds = torch.max(outputs, 1)
+                loss = self.criterion(outputs, labels)
+
+            # update test loss and accuracy counts
+            loss_test += loss.item() * inputs.size(0)
             acc_test += torch.sum(preds == labels.data)
-            # calculate confusion matrix
+
+            # update confusion matrix
             for t, p in zip(labels.view(-1), preds.view(-1)):
                 cm[t.long(), p.long()] += 1
-            # free some memory
-            del inputs, labels, outputs, preds
+
+            # Free up memory in use
             torch.cuda.empty_cache()
-        # average testing loss and accuracy
-        loss_test = loss_test / self.dataset.dataset_sizes['val']
-        acc_test = acc_test / self.dataset.dataset_sizes['val']
 
-        # calculate precision, recall, and f1
-        plot_confusion_matrix(cm, self.dataset.classes, normalize=True, title='', cm_save_path=self.config.cm_save_path)
+        # calculate average loss and accuracy
+        loss_test /= len(loader.dataset)
+        acc_test = acc_test.double() / len(loader.dataset)
+        cm = cm.numpy()  # Convert to numpy for further processing if needed
+
+        # Process confusion matrix and compute precision, recall, F1
+        plot_confusion_matrix(cm, self.dataset.classes, normalize=True, title='', cm_save_path=f"{self.config.cm_save_path}_{set_name.lower()}.png")
         cm_dict = cm_to_dict(cm, self.dataset.classes)
-        precision, recall, f1, _ = performance_report(cm_dict, mode = 'Macro')
-        
+        precision, recall, f1, _ = performance_report(cm_dict, mode='Macro', printing=False)
 
-        # calculate training time
+        # log results
         elapsed_time = time.time() - since
-        self.log("\n[INFO]  Evaluation completed in {:.0f}m {:.0f}s".format(elapsed_time // 60, elapsed_time % 60))
-        return round(acc_test.item(), 4), round(precision.item(), 4), round(recall.item(), 4), round(f1.item(), 4), round(loss_test, 4)
-    
+        self.log(f"\n[INFO]  {set_name} Evaluation completed in {elapsed_time // 60:.0f}m {elapsed_time % 60:.0f}s")
+        log_msg = f"\n[INFO]  {set_name} Results:\n       - Accuracy:  {acc_test:.4f}\n       - Precision: {precision:.4f}\n       - Recall:    {recall:.4f}\n       - F1 Score:  {f1:.4f}\n       - Loss:      {loss_test:.4f}\n"
+        self.log(log_msg)
+
+        # Optionally write to file
+        with open(self.config.eval_save_path, "a") as f:
+            f.write(log_msg + '\n')
+
+        return acc_test, precision, recall, f1, loss_test
+
+
     def evaluate_ml(self, set_name, X, y):
         if hasattr(self.model, 'eval'):
             self.model.eval()
@@ -463,7 +465,7 @@ class Trainer:
         accuracy = self.model.score(X, y)
 
         cm = confusion_matrix(y, preds)
-        plot_confusion_matrix(cm, self.dataset.classes, normalize=True, title='', cm_save_path=self.config.cm_save_path)
+        plot_confusion_matrix(cm, self.dataset.classes, normalize=True, title='', cm_save_path=f"{self.config.cm_save_path}_{set_name.lower()}.png")
         cm_dict = cm_to_dict(cm, self.dataset.classes)
         precision, recall, f1, _ = performance_report(cm_dict, mode='macro', printing=False)
 
