@@ -1,0 +1,63 @@
+# Logs
+log/
+
+# Datasets - ignore all data content
+data/compressed/*
+data/uncompressed/*
+data/splitted/*
+
+# Keep README files in dataset folders
+!data/compressed/README*
+!data/uncompressed/README*
+!data/splitted/README*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Pipenv
+Pipfile.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Model files (optional - uncomment if you want to ignore saved models)
+# *.pth
+# *.pkl
+# *.h5
+# *.onnx
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Temporary files
+*.tmp
+*.bak
