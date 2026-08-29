@@ -63,3 +63,13 @@ Thumbs.db
 *.bak
 .env
 scripts/
+
+# Raw dataset archives and recovered run logs (multi-GB, and the dataset is
+# clinical data - never commit these to a public repo)
+*.zip
+
+# Windows "downloaded from the internet" metadata
+*:Zone.Identifier
+
+# torch hub cache created by the docker runs
+.cache/

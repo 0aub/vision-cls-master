@@ -215,8 +215,11 @@ vision-cls-master/
 ├── requirements.txt          # Python dependencies
 ├── run.sh                    # Start script (with Jupyter)
 ├── stop.sh                   # Stop script
-├── README.md                 # This file
-└── ISSUES_AND_LIMITATIONS.md # Known issues and limitations
+├── docs/                     # Project documentation
+│   ├── IMPLEMENTATION_PLAN.md
+│   ├── ISSUES_AND_LIMITATIONS.md  # Known issues and limitations
+│   └── PHASE_1_SUMMARY.md
+└── README.md                 # This file
 ```
 
 ## Usage

@@ -60,3 +60,6 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Raw dataset archives
+*.zip

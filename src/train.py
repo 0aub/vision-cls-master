@@ -397,7 +397,7 @@ class Trainer:
                 loss.backward()
                 self.optimizer.step()
                 # calculate training loss and accuracy
-                loss_train += loss.item()
+                loss_train += loss.item() * inputs.size(0)
                 acc_train += torch.sum(preds == labels.data)
                 # free some memory
                 del inputs, labels, outputs, preds
@@ -424,7 +424,7 @@ class Trainer:
                 # compute loss
                 loss = self.criterion(outputs, labels)
                 # calculate training loss and accuracy
-                loss_val += loss.item()
+                loss_val += loss.item() * inputs.size(0)
                 acc_val += torch.sum(preds == labels.data)
                 # calculate confusion matrix
                 for t, p in zip(labels.view(-1), preds.view(-1)):
@@ -437,7 +437,7 @@ class Trainer:
             avg_acc_val = acc_val / self.dataset.dataset_sizes['val']
             # calculate precision, recall, and f1
             cm_dict = cm_to_dict(cm, self.dataset.classes)
-            precision, recall, f1, _ = performance_report(cm_dict, mode = 'Macro')
+            precision, recall, f1, _ = performance_report(cm_dict, mode='macro')
             epoch_time = int(time.time() - epoch_timer)
             # logging
             self.log("loss: {:.4f}  acc: {:.4f}  val_loss: {:.4f} val_acc: {:.4f} P: {:.4f} R: {:.4f} F1: {:.4f}".format(avg_loss, avg_acc, avg_loss_val, avg_acc_val, precision, recall, f1))
@@ -522,7 +522,7 @@ class Trainer:
         # Process confusion matrix and compute precision, recall, F1
         plot_confusion_matrix(cm, self.dataset.classes, normalize=True, title='', cm_save_path=f"{self.config.cm_save_path}_{set_name.lower()}.png")
         cm_dict = cm_to_dict(cm, self.dataset.classes)
-        precision, recall, f1, _ = performance_report(cm_dict, mode='Macro', printing=False)
+        precision, recall, f1, _ = performance_report(cm_dict, mode='macro', printing=False)
 
         # log results
         elapsed_time = time.time() - since

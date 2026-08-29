@@ -68,10 +68,13 @@ def performance_report(cm, mode='macro', printing=False):
             else:
                 print(f"%{max_key}s %9.2f %9.2f %9.2f %9d" % (labels[key] if isinstance(key, int) else key, value[0], value[1], value[2], value[3]))
 
+    mode = str(mode).lower()
     if mode == 'macro':
         return cr['Macro_avg']
-    else:
+    elif mode == 'weighted':
         return cr['Weighted_avg']
+    else:
+        raise ValueError(f"performance_report: unknown mode {mode!r} (expected 'macro' or 'weighted')")
 
 
 def cm_to_dict(cm, labels):
