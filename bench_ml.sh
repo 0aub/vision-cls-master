@@ -37,7 +37,18 @@ done
 touch "$SENTINEL"
 echo "ML FAST LANE DONE ($FEATURES) $(date +%H:%M:%S)"
 
-while docker ps --format '{{.Command}}' | grep -q train_ml; do
+# `docker ps --format {{.Command}}` prints the image ENTRYPOINT, not the Cmd, so
+# it never matches; inspect each container's Cmd instead. Getting this wrong once
+# started a second svm on the same cell.
+in_flight() {
+  local c cmd
+  for c in $(docker ps -q); do
+    cmd=$(docker inspect -f '{{.Config.Cmd}}' "$c" 2>/dev/null)
+    case "$cmd" in *train_ml*) return 0;; esac
+  done
+  return 1
+}
+while in_flight; do
   echo "### waiting for an in-flight classical run to finish  $(date +%H:%M:%S)"
   sleep 120
 done
