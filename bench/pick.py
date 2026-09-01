@@ -39,7 +39,16 @@ def rows(task):
                 tier = json.load(open(ef)).get("tier", "")
             except Exception:
                 pass
+        cfg = {}
+        cp = os.path.join(d, "run_config.json")
+        if os.path.exists(cp):
+            try:
+                cfg = json.load(open(cp))
+            except Exception:
+                pass
         out.append({"model": p[2], "tier": tier,
+                    "source": cfg.get("source", ""),
+                    "has_ckpt": os.path.exists(os.path.join(d, "best.pth")),
                     "test_acc": float(pd.read_csv(st).accuracy.iloc[0]),
                     "val_acc": float(pd.read_csv(sv).accuracy.iloc[0])
                     if os.path.exists(sv) else 0.0})
@@ -54,6 +63,9 @@ def main():
     ap.add_argument("--top", type=int, default=1)
     ap.add_argument("--by", default="test_acc", choices=["test_acc", "val_acc"])
     ap.add_argument("--exclude", nargs="*", default=[])
+    ap.add_argument("--source", default=None, help="filter on run_config source")
+    ap.add_argument("--needs_ckpt", action="store_true",
+                    help="only runs that saved a best.pth (Grad-CAM, CV)")
     args = ap.parse_args()
     df = rows(args.task)
     if df.empty:
@@ -64,8 +76,14 @@ def main():
         df = df[df.tier.isin(DEEP)]
     if args.exclude:
         df = df[~df.model.isin(args.exclude)]
+    if args.source:
+        df = df[df.source == args.source]
+    if args.needs_ckpt:
+        df = df[df.has_ckpt]
+    # tagged so the shell drivers can pull names out of the container's stdout,
+    # which also carries the CUDA image banner
     for m in df.sort_values(args.by, ascending=False).model.head(args.top):
-        print(m)
+        print("PICK\t" + m)
 
 
 if __name__ == "__main__":

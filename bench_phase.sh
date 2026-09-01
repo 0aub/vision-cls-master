@@ -8,6 +8,10 @@ GPU() { ./bench.sh "$@" 2>&1 \
 CPU() { ./bench-cpu.sh "$@" 2>&1 \
   | grep -vE "^==|CUDA Version|Container image|governed by|By pulling|developer.nvidia|copy of this license" | tail -14; }
 stamp() { echo "$1  $(date -Iseconds)" >> log/bench-phase-timing.txt; }
+# pick.py needs pandas, so it runs inside the image; the image's entrypoint
+# prints a CUDA banner, hence the tagged-line extraction.
+PICK() { ./bench-cpu.sh python3 bench/pick.py "$@" 2>/dev/null \
+         | sed -n 's/^PICK\t//p'; }
 
 phase_B() {
   stamp "PHASE B start"
@@ -18,7 +22,7 @@ phase_B() {
   GPU python3 bench/embed.py --name biomedclip --source open_clip
   for task in 5class binary; do
     K=5; [ "$task" = binary ] && K=2
-    BEST=$(python3 bench/pick.py --task $task --deep --top 1)
+    BEST=$(PICK --task $task --deep --source torchvision --top 1)
     echo "### best Phase A backbone for $task: $BEST"
     GPU python3 bench/embed.py --name "$BEST" --source torchvision \
         --ckpt "log/bench-$task-$BEST/best.pth" --num_classes $K --out "${BEST}_ft_${task}"
@@ -43,7 +47,7 @@ phase_B() {
   done
   # --- classical ML on embeddings ------------------------------------------
   for task in 5class binary; do
-    BEST=$(python3 bench/pick.py --task $task --deep --top 1)
+    BEST=$(PICK --task $task --deep --source torchvision --top 1)
     for feat in "embed:dinov2_vitb14" "embed:${BEST}_ft_${task}"; do
       for m in logistic_regression decision_tree random_forest svm knn naive_bayes adaboost lda qda mlp; do
         echo "### [ML/$task] $m on $feat"
@@ -58,8 +62,8 @@ phase_B() {
 phase_C() {
   stamp "PHASE C start"
   CPU python3 bench/masks.py
-  M1=$(python3 bench/pick.py --task 5class --deep --top 2 | tr '\n' ' ')
-  DV=$(python3 bench/pick.py --task 5class --tier tier5-foundation --top 1)
+  M1=$(PICK --task 5class --deep --source torchvision --needs_ckpt --top 2 | tr '\n' ' ')
+  DV=$(PICK --task 5class --tier tier5-foundation --needs_ckpt --top 1)
   echo "### CAM models: $M1 | dinov2: $DV"
   GPU python3 bench/cams.py --models $M1 --dinov2 "$DV" --panels 8
   CPU python3 bench/trust.py
@@ -69,7 +73,7 @@ phase_C() {
 
 phase_D() {
   stamp "PHASE D start"
-  BEST=$(python3 bench/pick.py --task 5class --deep --top 1)
+  BEST=$(PICK --task 5class --deep --source torchvision --top 1)
   BACKBONES="efficientnet_b0"
   [ "$BEST" != "efficientnet_b0" ] && BACKBONES="$BACKBONES $BEST"
   for bb in $BACKBONES; do
@@ -95,9 +99,9 @@ phase_D() {
 phase_S() {
   stamp "STATS start"
   for task in 5class binary; do
-    CNN=$(python3 bench/pick.py --task $task --tier tier2-classic-cnn --top 1)
-    EFF=$(python3 bench/pick.py --task $task --tier tier3-efficient-cnn --top 1)
-    TRF=$(python3 bench/pick.py --task $task --tier tier4-transformer --top 1)
+    CNN=$(PICK --task $task --tier tier2-classic-cnn --needs_ckpt --top 1)
+    EFF=$(PICK --task $task --tier tier3-efficient-cnn --needs_ckpt --top 1)
+    TRF=$(PICK --task $task --tier tier4-transformer --needs_ckpt --top 1)
     echo "### CV $task: $CNN / $EFF / $TRF / dinov2_vitb14(lora) / efficientnet_b0"
     for m in $CNN $EFF $TRF efficientnet_b0; do
       [ -z "$m" ] && continue
