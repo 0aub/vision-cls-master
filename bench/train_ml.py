@@ -42,9 +42,16 @@ GRIDS = {
 }
 
 
-def make_model(name, params=None):
+def make_model(name, params=None, raw_pixels=False):
     from src.modules import get_ml_model
     m = get_ml_model(name)
+    if name == "svm" and raw_pixels:
+        # SVC(probability=True) refits the model five more times for Platt
+        # scaling. On 150,528 raw dimensions that is hours, and it changes only
+        # the probability estimates - never the decision boundary, never the
+        # predictions. Probabilities come from softmax(decision_function)
+        # instead, which the M4 temperature scaling recalibrates anyway.
+        m.set_params(probability=False)
     if params:
         m.set_params(**params)
     return m
@@ -126,19 +133,20 @@ def main():
     print(f"=== {args.task} / {name}  features {Xtr.shape} ({feat_s:.1f}s) ===", flush=True)
 
     from sklearn.metrics import f1_score
+    raw = args.features == "raw"
     chosen, best_f1 = {}, None
     grid = GRIDS.get(args.model, [{}]) if args.select else [{}]
     t0 = time.time()
     if len(grid) > 1:
         Xva, yva, _ = data["val"]
         for params in grid:
-            m = make_model(args.model, params)
+            m = make_model(args.model, params, raw)
             m.fit(Xtr, ytr)
             f1 = f1_score(yva, m.predict(Xva), average="macro", zero_division=0)
             print(f"    grid {params} -> val macroF1 {f1:.4f}", flush=True)
             if best_f1 is None or f1 > best_f1:
                 best_f1, chosen = f1, params
-    model = make_model(args.model, chosen)
+    model = make_model(args.model, chosen, raw)
     model.fit(Xtr, ytr)
     fit_s = time.time() - t0
     with open(os.path.join(out_dir, "best.pkl"), "wb") as f:
@@ -180,6 +188,10 @@ def main():
         "train_wallclock_min": round(fit_s / 60.0, 3),
         "feature_extraction_min": round(feat_s / 60.0, 3),
         "selected_params": chosen, "val_selected": bool(args.select),
+        "svm_probability_note": ("softmax(decision_function): SVC(probability=True) "
+                                 "is intractable on 150,528 raw dims and does not "
+                                 "change predictions")
+        if (args.model == "svm" and raw) else None,
         "val_macro_f1_of_selection": best_f1,
         "model_size_mb": round(os.path.getsize(os.path.join(out_dir, "best.pkl")) / 1024**2, 2),
         "seed": C.SEED,
