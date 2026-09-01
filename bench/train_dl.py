@@ -187,7 +187,7 @@ def main():
     ap.add_argument("--batch_size", type=int, default=16)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--image_size", type=int, default=224)
-    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--loss", default="ce",
                     choices=["ce", "weighted_ce", "focal", "cb", "sampler"])
     ap.add_argument("--sampler", default="none", choices=["none", "weighted"])
