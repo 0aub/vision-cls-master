@@ -30,12 +30,16 @@ for task in 5class binary; do
   for m in "${FAST[@]}"; do run_one "$m" "$task"; done
 done
 
-# wait out any svm container left running by an earlier invocation
-while docker ps --format '{{.Command}}{{.Names}}' | grep -q train_ml; do
+# The sentinel fires BEFORE the svm lane: the phase chain must not sit idle
+# waiting for a single tier-1 cell whose libsvm SMO has no iteration bound. svm
+# results land in the report and the final zip whenever they arrive, because
+# both are regenerated at every later phase boundary.
+touch "$SENTINEL"
+echo "ML FAST LANE DONE ($FEATURES) $(date +%H:%M:%S)"
+
+while docker ps --format '{{.Command}}' | grep -q train_ml; do
   echo "### waiting for an in-flight classical run to finish  $(date +%H:%M:%S)"
   sleep 120
 done
 for task in 5class binary; do run_one svm "$task"; done
-
-touch "$SENTINEL"
 echo "ML DONE ($FEATURES) $(date +%H:%M:%S)"
