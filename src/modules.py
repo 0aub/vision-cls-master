@@ -1048,3 +1048,217 @@ def get_ml_model(model_name):
         return MLPClassifier()
     else:
         raise ValueError(f"Unsupported ML model name: {model_name}")
+
+
+# =============================================================================
+# Benchmark v2 model registry (BENCHMARK_PLAN_V2.md)
+# =============================================================================
+# Three sources feed one interface:
+#   'torchvision'  - the existing base_model() path, ImageNet-1k weights
+#   'hub-dinov2'   - torch.hub facebookresearch/dinov2 backbones + linear head
+#   'open_clip'    - BiomedCLIP image encoder + linear head
+# and three training modes: 'full' (fine-tune everything), 'probe' (frozen
+# backbone, head only) and 'lora' (frozen backbone, low-rank adapters on the
+# attention q and v projections plus the head).
+#
+# get_model() above freezes the backbone unconditionally, which is the 2024
+# protocol. The benchmark needs full fine-tuning as well, so build_model()
+# sets requires_grad explicitly after construction rather than relying on it.
+
+_HEAD_ATTRS = ("fc", "classifier", "head", "heads")
+
+
+def locate_head(model):
+    """Return (owner, key, in_features) for the final Linear of a torchvision model.
+
+    `owner[key]` (Sequential) or `getattr(owner, key)` (Module) is the layer to
+    replace. Covers every family in the v2 grid: densenet/googlenet/resnet/
+    shufflenet/swin expose a bare Linear, alexnet/vgg/convnext/efficientnet/
+    maxvit/mobilenet_v3/vit wrap it in a Sequential.
+    """
+    for attr in _HEAD_ATTRS:
+        mod = getattr(model, attr, None)
+        if isinstance(mod, nn.Linear):
+            return model, attr, mod.in_features
+        if isinstance(mod, nn.Sequential):
+            idx = [i for i, m in enumerate(mod) if isinstance(m, nn.Linear)]
+            if idx:
+                return mod, idx[-1], mod[idx[-1]].in_features
+    raise ValueError(f"could not locate the classifier head of {type(model).__name__}")
+
+
+def set_head(model, num_classes):
+    """Replace the final Linear with a fresh one of `num_classes` outputs."""
+    owner, key, nf = locate_head(model)
+    new = nn.Linear(nf, num_classes)
+    if isinstance(key, int):
+        owner[key] = new
+    else:
+        setattr(owner, key, new)
+    return nf
+
+
+def strip_head(model):
+    """Replace the final Linear with Identity so forward() yields penultimate features."""
+    owner, key, nf = locate_head(model)
+    if isinstance(key, int):
+        owner[key] = nn.Identity()
+    else:
+        setattr(owner, key, nn.Identity())
+    return nf
+
+
+class QVLoRALinear(nn.Module):
+    """LoRA on the q and v slices of a FUSED qkv projection.
+
+    DINOv2 (like timm ViTs) packs q, k and v into one Linear of width 3*dim, so
+    peft's per-module targeting cannot address q and v separately. This is the
+    standard LoRA update (B @ A, B zero-initialised, scaled by alpha/r, dropout
+    on the input) applied to the q and v output blocks only, which is what the
+    plan asks for. Same hyper-parameters as a peft LoraConfig would take.
+    """
+
+    def __init__(self, base: nn.Linear, r=8, alpha=16, dropout=0.05):
+        super().__init__()
+        self.base = base
+        for p in self.base.parameters():
+            p.requires_grad = False
+        self.dim = base.out_features // 3
+        self.r, self.scaling = r, alpha / r
+        self.dropout = nn.Dropout(dropout)
+        self.lora_A_q = nn.Linear(base.in_features, r, bias=False)
+        self.lora_B_q = nn.Linear(r, self.dim, bias=False)
+        self.lora_A_v = nn.Linear(base.in_features, r, bias=False)
+        self.lora_B_v = nn.Linear(r, self.dim, bias=False)
+        for a in (self.lora_A_q, self.lora_A_v):
+            nn.init.kaiming_uniform_(a.weight, a=math.sqrt(5))
+        for b in (self.lora_B_q, self.lora_B_v):
+            nn.init.zeros_(b.weight)
+
+    def forward(self, x):
+        out = self.base(x)
+        xd = self.dropout(x)
+        dq = self.lora_B_q(self.lora_A_q(xd)) * self.scaling
+        dv = self.lora_B_v(self.lora_A_v(xd)) * self.scaling
+        pad = torch.zeros_like(dq)
+        return out + torch.cat([dq, pad, dv], dim=-1)
+
+
+def apply_qv_lora(backbone, r=8, alpha=16, dropout=0.05):
+    """Wrap every fused `attn.qkv` Linear in the backbone with QVLoRALinear."""
+    n = 0
+    for name, module in list(backbone.named_modules()):
+        qkv = getattr(module, "qkv", None)
+        if isinstance(qkv, nn.Linear) and qkv.out_features == 3 * qkv.in_features:
+            module.qkv = QVLoRALinear(qkv, r=r, alpha=alpha, dropout=dropout)
+            n += 1
+    if n == 0:
+        raise RuntimeError("apply_qv_lora: no fused qkv projection found")
+    return n
+
+
+class BackboneWithHead(nn.Module):
+    """Feature extractor + linear head, for the non-torchvision sources.
+
+    `feature_mode` picks what the DINOv2 forward returns:
+      'cls'      - the CLS token (default)
+      'cls+mean' - CLS concatenated with the mean of the patch tokens
+    """
+
+    def __init__(self, backbone, num_features, num_classes, feature_mode="cls",
+                 kind="dinov2"):
+        super().__init__()
+        self.backbone = backbone
+        self.kind = kind
+        self.feature_mode = feature_mode
+        self.head = nn.Linear(num_features, num_classes)
+
+    def features(self, x):
+        if self.kind == "dinov2":
+            out = self.backbone.forward_features(x)
+            cls = out["x_norm_clstoken"]
+            if self.feature_mode == "cls+mean":
+                return torch.cat([cls, out["x_norm_patchtokens"].mean(dim=1)], dim=-1)
+            return cls
+        return self.backbone.encode_image(x)          # open_clip
+
+    def forward(self, x):
+        return self.head(self.features(x))
+
+
+DINOV2_HUB = {
+    "dinov2_vits14": ("facebookresearch/dinov2", "dinov2_vits14", 384),
+    "dinov2_vitb14": ("facebookresearch/dinov2", "dinov2_vitb14", 768),
+    "dinov2_vitl14": ("facebookresearch/dinov2", "dinov2_vitl14", 1024),
+}
+BIOMEDCLIP_HF = "hf-hub:microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"
+
+
+def load_dinov2(name):
+    """torch.hub DINOv2 backbone. Returns (backbone, cls_dim)."""
+    repo, entry, dim = DINOV2_HUB[name]
+    backbone = torch.hub.load(repo, entry, trust_repo=True)
+    return backbone, dim
+
+
+def load_biomedclip():
+    """open_clip BiomedCLIP. Returns (clip_model, preprocess, tokenizer, embed_dim)."""
+    import open_clip
+    model, preprocess = open_clip.create_model_from_pretrained(BIOMEDCLIP_HF)
+    tokenizer = open_clip.get_tokenizer(BIOMEDCLIP_HF)
+    with torch.no_grad():
+        dim = model.encode_image(torch.zeros(1, 3, 224, 224)).shape[-1]
+    return model, preprocess, tokenizer, dim
+
+
+def build_model(name, num_classes, source="torchvision", train_mode="full",
+                feature_mode="cls", lora_r=8, lora_alpha=16, lora_dropout=0.05):
+    """The single entry point the benchmark runner uses."""
+    if source == "torchvision":
+        model = base_model(name.lower())
+        set_head(model, num_classes)
+        if train_mode == "full":
+            for p in model.parameters():
+                p.requires_grad = True
+        elif train_mode == "probe":
+            for p in model.parameters():
+                p.requires_grad = False
+            owner, key, _ = locate_head(model)
+            head = owner[key] if isinstance(key, int) else getattr(owner, key)
+            for p in head.parameters():
+                p.requires_grad = True
+        else:
+            raise ValueError(f"train_mode {train_mode!r} is not supported for torchvision models")
+        return model
+
+    if source == "hub-dinov2":
+        backbone, dim = load_dinov2(name)
+        nf = dim * (2 if feature_mode == "cls+mean" else 1)
+        for p in backbone.parameters():
+            p.requires_grad = False
+        if train_mode == "lora":
+            apply_qv_lora(backbone, lora_r, lora_alpha, lora_dropout)
+        elif train_mode not in ("probe", "full"):
+            raise ValueError(f"unknown train_mode {train_mode!r}")
+        if train_mode == "full":
+            for p in backbone.parameters():
+                p.requires_grad = True
+        return BackboneWithHead(backbone, nf, num_classes, feature_mode, kind="dinov2")
+
+    if source == "open_clip":
+        clip, _, _, dim = load_biomedclip()
+        visual = clip.visual
+        for p in visual.parameters():
+            p.requires_grad = False
+
+        class _Vis(nn.Module):
+            def __init__(self, v):
+                super().__init__()
+                self.v = v
+
+            def encode_image(self, x):
+                return self.v(x)
+
+        return BackboneWithHead(_Vis(visual), dim, num_classes, kind="clip")
+
+    raise ValueError(f"unknown model source {source!r}")

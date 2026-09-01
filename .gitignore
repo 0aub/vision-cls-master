@@ -73,3 +73,15 @@ scripts/
 
 # torch hub cache created by the docker runs
 .cache/
+
+# ---- bench-v2 additions ----
+# Everything superseded lives here; never committed, never deleted.
+archive/
+# Datasets and run outputs in full (the earlier rules only covered subdirs)
+data/
+log/
+# Model artefacts and raw arrays
+*.pth
+*.pkl
+*.npy
+*.npz

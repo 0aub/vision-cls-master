@@ -1,0 +1,23 @@
+# Benchmark v2 image: the existing CUDA/torch stack plus the packages the
+# foundation-model, efficiency and explainability phases need.
+FROM vision-cls:timm
+
+RUN pip3 install --no-cache-dir \
+      fvcore==0.1.5.post20221221 \
+      thop \
+      peft \
+      open_clip_torch \
+      grad-cam \
+      statsmodels \
+      seaborn \
+      split-folders \
+      tqdm \
+      opencv-python-headless \
+      transformers \
+      torchmetrics
+
+ENV PYTHONPATH=/app \
+    TORCH_HOME=/app/.cache/torch \
+    HF_HOME=/app/.cache/hf \
+    MPLCONFIGDIR=/app/.cache/mpl
+WORKDIR /app
