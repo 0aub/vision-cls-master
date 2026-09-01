@@ -46,18 +46,19 @@ class FocalLoss(nn.Module):
         return loss.mean()
 
 
-def build_criterion(kind, labels, num_classes, device):
+def build_criterion(kind, labels, num_classes, device, label_smoothing=0.0):
     kind = (kind or "ce").lower()
+    ls = float(label_smoothing or 0.0)
     if kind in ("ce", "plain_ce", "sampler"):
-        return nn.CrossEntropyLoss(), None
+        return nn.CrossEntropyLoss(label_smoothing=ls), None
     if kind == "weighted_ce":
         w = inverse_frequency_weights(labels, num_classes).to(device)
-        return nn.CrossEntropyLoss(weight=w), w.tolist()
+        return nn.CrossEntropyLoss(weight=w, label_smoothing=ls), w.tolist()
     if kind == "focal":
         return FocalLoss(gamma=2.0), None
     if kind in ("cb", "class_balanced"):
         w = class_balanced_weights(labels, num_classes).to(device)
-        return nn.CrossEntropyLoss(weight=w), w.tolist()
+        return nn.CrossEntropyLoss(weight=w, label_smoothing=ls), w.tolist()
     raise ValueError(f"unknown loss {kind!r}")
 
 

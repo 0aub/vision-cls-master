@@ -41,10 +41,11 @@ def forward_logits(model, x):
     return out
 
 
-def transforms_for(source, image_size):
+def transforms_for(source, image_size, aug="light"):
     if source == "hub-dinov2":
-        return C.dinov2_train_transform(image_size), C.dinov2_eval_transform(image_size)
-    return C.train_transform(image_size), C.eval_transform(image_size)
+        return (C.dinov2_train_transform(image_size),
+                C.dinov2_eval_transform(image_size))
+    return (C.train_transform(image_size, aug=aug), C.eval_transform(image_size))
 
 
 @torch.no_grad()
@@ -63,7 +64,7 @@ def train_one(args, out_dir, device):
     C.seed_everything(C.SEED)
     classes = C.classes_for(args.task)
     num_classes = len(classes)
-    tf_train, tf_eval = transforms_for(args.source, args.image_size)
+    tf_train, tf_eval = transforms_for(args.source, args.image_size, args.aug)
 
     train_ds_probe = C.image_folder("train", args.task, tf_eval)
     train_labels = [t for _, t in train_ds_probe.samples]
@@ -87,13 +88,29 @@ def train_one(args, out_dir, device):
                                    workers=args.workers, sampler=sampler)
             _, vl, _ = C.eval_loader("val", args.task, tf_eval,
                                      batch_size=max(batch, 16), workers=args.workers)
-            criterion, loss_weights = L.build_criterion(args.loss, train_labels,
-                                                        num_classes, device)
+            criterion, loss_weights = L.build_criterion(
+                args.loss, train_labels, num_classes, device,
+                label_smoothing=args.label_smoothing)
             criterion = criterion.to(device)
             params = [p for p in model.parameters() if p.requires_grad]
-            optimizer = torch.optim.Adam(params, lr=args.lr)
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
-                                                                   T_max=args.epochs)
+            if args.optimizer == "adamw":
+                optimizer = torch.optim.AdamW(params, lr=args.lr,
+                                              weight_decay=args.weight_decay)
+            elif args.optimizer == "sgd":
+                optimizer = torch.optim.SGD(params, lr=args.lr, momentum=0.9,
+                                            weight_decay=args.weight_decay)
+            else:
+                optimizer = torch.optim.Adam(params, lr=args.lr,
+                                             weight_decay=args.weight_decay)
+            cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=max(1, args.epochs - args.warmup_epochs))
+            if args.warmup_epochs > 0:
+                warm = torch.optim.lr_scheduler.LinearLR(
+                    optimizer, start_factor=1e-3, total_iters=args.warmup_epochs)
+                scheduler = torch.optim.lr_scheduler.SequentialLR(
+                    optimizer, [warm, cosine], milestones=[args.warmup_epochs])
+            else:
+                scheduler = cosine
             if torch.cuda.is_available():
                 torch.cuda.reset_peak_memory_stats()
             history = []
@@ -152,8 +169,9 @@ def train_one(args, out_dir, device):
                 # the smoke-test gate exists (addendum B6)
                 pd.DataFrame(history).to_csv(history_path, index=False)
 
-                if va_acc > best_acc:
-                    best_acc, best_epoch = va_acc, epoch
+                score = f1 if args.select_on == "val_macro_f1" else va_acc
+                if score > best_acc:
+                    best_acc, best_epoch = score, epoch
                     torch.save(model.state_dict(), best_path)   # state_dict only
                 if args.printing:
                     print(f"  ep {epoch:3d}/{args.epochs}  loss {tr_loss:.4f} acc {tr_acc:.4f}"
@@ -164,7 +182,8 @@ def train_one(args, out_dir, device):
             peak_vram = (torch.cuda.max_memory_allocated() / 1024**2
                          if torch.cuda.is_available() else None)
             return model, dict(batch_size=batch, best_val_accuracy=best_acc,
-                               best_epoch=best_epoch, train_wallclock_min=round(wall_min, 3),
+                               best_epoch=best_epoch, best_val_score_metric=args.select_on,
+                               train_wallclock_min=round(wall_min, 3),
                                peak_train_vram_mb=round(peak_vram, 1) if peak_vram else None,
                                loss_weights=loss_weights)
         except torch.cuda.OutOfMemoryError:
@@ -191,6 +210,18 @@ def main():
     ap.add_argument("--loss", default="ce",
                     choices=["ce", "weighted_ce", "focal", "cb", "sampler"])
     ap.add_argument("--sampler", default="none", choices=["none", "weighted"])
+    ap.add_argument("--protocol", default="uniform",
+                    choices=["uniform", "tuned", "sweep"],
+                    help="'uniform' = the brief's one-recipe-for-everything grid; "
+                         "'tuned' = the per-tier validation-selected recipe; "
+                         "'sweep' = a cell of the selection sweep itself")
+    ap.add_argument("--optimizer", default="adam", choices=["adam", "adamw", "sgd"])
+    ap.add_argument("--weight_decay", type=float, default=0.0)
+    ap.add_argument("--warmup_epochs", type=int, default=0)
+    ap.add_argument("--label_smoothing", type=float, default=0.0)
+    ap.add_argument("--aug", default="light", choices=["light", "strong"])
+    ap.add_argument("--select_on", default="val_accuracy",
+                    choices=["val_accuracy", "val_macro_f1"])
     ap.add_argument("--lora_r", type=int, default=8)
     ap.add_argument("--lora_alpha", type=int, default=16)
     ap.add_argument("--lora_dropout", type=float, default=0.05)
@@ -225,7 +256,7 @@ def main():
                                      map_location=device, weights_only=True))
     model.to(device).eval()
     classes = C.classes_for(args.task)
-    _, tf_eval = transforms_for(args.source, args.image_size)
+    _, tf_eval = transforms_for(args.source, args.image_size, args.aug)
     summary = {}
     for split in C.SPLITS:
         _, dl, paths = C.eval_loader(split, args.task, tf_eval, batch_size=32,
@@ -239,7 +270,11 @@ def main():
 
     eff = EFF.measure_all(model, args.image_size, skip_cpu=args.skip_cpu_latency)
     eff.update(meta)
-    eff.update({"model": args.model, "name": name, "task": args.task,
+    eff.update({"protocol": args.protocol, "optimizer": args.optimizer, "weight_decay": args.weight_decay,
+                "warmup_epochs": args.warmup_epochs,
+                "label_smoothing": args.label_smoothing, "aug": args.aug,
+                "select_on": args.select_on,
+                "model": args.model, "name": name, "task": args.task,
                 "source": args.source, "train_mode": args.train_mode,
                 "tier": args.tier, "epochs": args.epochs, "lr": args.lr,
                 "image_size": args.image_size, "seed": C.SEED,

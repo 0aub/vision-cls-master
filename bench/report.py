@@ -57,6 +57,14 @@ def collect():
         val_acc = float(pd.read_csv(sv).accuracy.iloc[0]) if os.path.exists(sv) else np.nan
         rows.append({
             "task": task, "model": name, "tier": eff.get("tier") or "unlabelled",
+            "protocol": eff.get("protocol", "uniform"),
+            "optimizer": eff.get("optimizer", ""), "lr": eff.get("lr"),
+            "weight_decay": eff.get("weight_decay"),
+            "warmup_epochs": eff.get("warmup_epochs"),
+            "label_smoothing": eff.get("label_smoothing"),
+            "aug": eff.get("aug", ""), "select_on": eff.get("select_on", ""),
+            "epochs": eff.get("epochs"),
+            "best_epoch": eff.get("best_epoch"),
             "train_mode": eff.get("train_mode", ""),
             "test_acc": s.get("accuracy"), "test_macro_f1": s.get("macro_f1"),
             "test_weighted_f1": s.get("weighted_f1"), "test_mean_ce": s.get("mean_ce"),
@@ -82,9 +90,12 @@ def fmt(df, cols, floats=4):
     return d.to_markdown(index=False)
 
 
-def leaderboard(df, task):
+def leaderboard(df, task, protocol=None):
     out = []
     sub = df[df.task == task]
+    if protocol is not None:
+        sub = sub[sub.protocol == protocol]
+    sub = sub[sub.tier != "hpo-sweep"]
     if sub.empty:
         return "  (no runs yet)\n"
     cols = ["model", "train_mode", "test_acc", "test_macro_f1", "test_weighted_f1",
@@ -179,10 +190,30 @@ def main():
     w("batch 16, `cpu_ms_b1` median CPU latency at batch 1 over 100 iterations after")
     w("10 warm-ups, `vram_MB` peak training VRAM, `train_min` training wall-clock.")
     w("")
-    w("### 3.1 Five-class")
-    w(leaderboard(df, "5class"))
-    w("### 3.2 Binary (lesion detection)")
-    w(leaderboard(df, "binary"))
+    tuned_present = (df.protocol == "tuned").any()
+    if tuned_present:
+        w("Two protocols are reported. **Protocol B (tuned)** is the headline: one")
+        w("validation-selected recipe per tier, chosen by the sweep in section 3.3.")
+        w("**Protocol A (uniform)** is the brief's single-recipe-for-everything grid,")
+        w("kept as a sensitivity ablation - it quantifies how much of a WCE benchmark's")
+        w("ranking is an artefact of sharing one learning rate across every tier.")
+        w("")
+        w("### 3.1 Five-class - Protocol B (tuned, headline)")
+        w(leaderboard(df, "5class", "tuned"))
+        w("### 3.2 Binary - Protocol B (tuned, headline)")
+        w(leaderboard(df, "binary", "tuned"))
+        w("### 3.1a Five-class - Protocol A (uniform, ablation)")
+        w(leaderboard(df, "5class", "uniform"))
+        w("### 3.2a Binary - Protocol A (uniform, ablation)")
+        w(leaderboard(df, "binary", "uniform"))
+    else:
+        w("### 3.1 Five-class")
+        w(leaderboard(df, "5class"))
+        w("### 3.2 Binary (lesion detection)")
+        w(leaderboard(df, "binary"))
+    w("### 3.3 Hyper-parameter sweep (per-tier recipe selection)")
+    w("")
+    w(read_txt(os.path.join(LOG, "bench-hpo.md"), missing="  (not yet run)\n"))
 
     w("## 4. Foundation models (tier 5)")
     w("")

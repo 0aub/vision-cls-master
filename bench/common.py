@@ -90,10 +90,26 @@ def eval_transform(image_size=224, norm=IMAGENET_NORM):
 
 
 def train_transform(image_size=224, norm=IMAGENET_NORM, aug=True):
-    ops = [transforms.Resize((image_size, image_size))]
-    if aug:                                   # "light flips (train only)"
-        ops += [transforms.RandomHorizontalFlip(), transforms.RandomVerticalFlip()]
+    """aug: True/'light' = the brief's flips-only policy; 'strong' adds scale,
+    rotation and photometric jitter; False/'none' = deterministic."""
+    mode = "light" if aug is True else ("none" if aug in (False, None) else str(aug))
+    if mode == "strong":
+        ops = [
+            transforms.RandomResizedCrop(image_size, scale=(0.6, 1.0),
+                                         ratio=(0.85, 1.18)),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomVerticalFlip(),
+            transforms.RandomApply([transforms.RandomRotation(20)], p=0.5),
+            transforms.ColorJitter(brightness=0.25, contrast=0.25,
+                                   saturation=0.25, hue=0.03),
+        ]
+    else:
+        ops = [transforms.Resize((image_size, image_size))]
+        if mode == "light":
+            ops += [transforms.RandomHorizontalFlip(), transforms.RandomVerticalFlip()]
     ops += [transforms.ToTensor(), transforms.Normalize(*norm)]
+    if mode == "strong":
+        ops += [transforms.RandomErasing(p=0.25, scale=(0.02, 0.12))]
     return transforms.Compose(ops)
 
 
