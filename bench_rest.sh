@@ -13,7 +13,10 @@ waitfor() { # waitfor <pattern-of-driver> <label>
 
 echo "[chain] started $(date -Iseconds)"
 waitfor "bench_run[.]sh A2"  "Phase A2-A4"
-waitfor "bench_ml[.]sh raw"  "classical ML on raw pixels"
+# the classical queue signals completion with a sentinel file, because its svm
+# lane deliberately outlives the driver that started it
+while [ ! -f log/.ml-raw-done ]; do sleep 60; done
+echo "[chain] classical ML on raw pixels finished $(date +%H:%M:%S)"
 
 stamp "PHASE A end"
 CPU python3 bench/report.py --phase A

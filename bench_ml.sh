@@ -1,21 +1,41 @@
 #!/bin/bash
 # Tier 1: the 10 classical models. Raw 224 pixels (Phase A) or cached embeddings
-# (Phase B). CPU-only container so it can run alongside the GPU grid.
-#   ./bench_ml.sh raw                      both tasks, library defaults
-#   ./bench_ml.sh embed:dinov2_vitb14      both tasks, val-selected grids
+# (Phase B). CPU-only container so it runs alongside the GPU grid.
+#   ./bench_ml.sh raw                    both tasks, library defaults
+#   ./bench_ml.sh embed:dinov2_vitb14    both tasks, val-selected grids
+#
+# svm goes LAST and in its own lane: on 150,528 raw dimensions libsvm's SMO has
+# no iteration bound and takes hours, and there is no reason for it to hold up
+# the other nine models. A run already in flight from an earlier invocation is
+# waited on rather than duplicated.
 set -uo pipefail
 cd "$(dirname "$0")"
 FEATURES="${1:-raw}"
 SELECT=""; [ "$FEATURES" != "raw" ] && SELECT="--select"
 TIER="tier1-classical"
-MODELS=(logistic_regression decision_tree random_forest svm knn naive_bayes adaboost lda qda mlp)
+FAST=(logistic_regression decision_tree random_forest knn naive_bayes adaboost lda qda mlp)
+SENTINEL="log/.ml-$(echo "$FEATURES" | tr ':' '_')-done"
+rm -f "$SENTINEL"
+
+run_one() {
+  local m="$1" task="$2"
+  echo "### [ML/$task] $m on $FEATURES  $(date +%H:%M:%S)"
+  ./bench-cpu.sh python3 bench/train_ml.py --model "$m" --task "$task" \
+      --features "$FEATURES" --tier "$TIER" $SELECT 2>&1 \
+    | grep -vE "^==|CUDA Version|Container image|governed by|By pulling|developer.nvidia|copy of this license|NVIDIA Driver was not detected|Container Toolkit|docs.nvidia.com" \
+    | tail -12
+}
+
 for task in 5class binary; do
-  for m in "${MODELS[@]}"; do
-    echo "### [ML/$task] $m on $FEATURES  $(date +%H:%M:%S)"
-    ./bench-cpu.sh python3 bench/train_ml.py --model "$m" --task "$task" \
-        --features "$FEATURES" --tier "$TIER" $SELECT 2>&1 \
-      | grep -vE "^==|CUDA Version|Container image|governed by|By pulling|developer.nvidia|copy of this license" \
-      | tail -10
-  done
+  for m in "${FAST[@]}"; do run_one "$m" "$task"; done
 done
+
+# wait out any svm container left running by an earlier invocation
+while docker ps --format '{{.Command}}{{.Names}}' | grep -q train_ml; do
+  echo "### waiting for an in-flight classical run to finish  $(date +%H:%M:%S)"
+  sleep 120
+done
+for task in 5class binary; do run_one svm "$task"; done
+
+touch "$SENTINEL"
 echo "ML DONE ($FEATURES) $(date +%H:%M:%S)"
