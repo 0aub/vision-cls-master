@@ -26,6 +26,7 @@ from bench import common as C                                      # noqa: E402
 
 ML_MODELS = ["logistic_regression", "decision_tree", "random_forest", "svm", "knn",
              "naive_bayes", "adaboost", "lda", "qda", "mlp"]
+SVM_MAX_ITER = int(os.environ.get("BENCH_SVM_MAX_ITER", 20_000_000))
 
 # val-selected grids (Phase B embeddings). Raw-pixel runs use the defaults only.
 GRIDS = {
@@ -46,6 +47,11 @@ def make_model(name, params=None, raw_pixels=False):
     from src.modules import get_ml_model
     m = get_ml_model(name)
     if name == "svm" and raw_pixels:
+        # A 150,528-dimension RBF SVM is the most expensive cell in the grid.
+        # A larger kernel cache keeps the whole Gram matrix resident, and a
+        # finite SMO bound guarantees the cell terminates; whether it converged
+        # is recorded in efficiency.json and reported, never hidden.
+        m.set_params(cache_size=2000, max_iter=SVM_MAX_ITER)
         # SVC(probability=True) refits the model five more times for Platt
         # scaling. On 150,528 raw dimensions that is hours, and it changes only
         # the probability estimates - never the decision boundary, never the

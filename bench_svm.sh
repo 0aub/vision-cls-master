@@ -1,25 +1,24 @@
 #!/bin/bash
-# Trailing lane for the raw-pixel SVM. Waits out whatever classical run is
-# already in flight, then fills in whichever svm cells are still missing.
+# The raw-pixel SVM, run last and alone.
+#
+# A 150,528-dimension RBF SVM is by far the most expensive cell in the grid: two
+# earlier attempts ran 1.6 h and 10 h respectively while sharing the box with the
+# GPU queue and the rest of the classical tier. It now runs with the whole
+# machine and a finite SMO budget, and efficiency.json records the iteration
+# count and whether it converged.
 set -uo pipefail
 cd "$(dirname "$0")"
-in_flight() {
-  local c cmd
-  for c in $(docker ps -q); do
-    cmd=$(docker inspect -f '{{.Config.Cmd}}' "$c" 2>/dev/null)
-    case "$cmd" in *train_ml*) return 0;; esac
-  done
-  return 1
-}
-while in_flight; do
-  echo "### svm lane: waiting for the in-flight classical run  $(date +%H:%M:%S)"
-  sleep 180
-done
 for task in 5class binary; do
   echo "### [ML/$task] svm on raw  $(date +%H:%M:%S)"
-  ./bench-cpu.sh python3 bench/train_ml.py --model svm --task "$task" \
-      --features raw --tier tier1-classical 2>&1 \
+  docker run --rm -i --shm-size=8g --memory=48g --cpus=22 \
+      --user "$(id -u):$(id -g)" \
+      -e HOME=/app/.cache -e TORCH_HOME=/app/.cache/torch -e HF_HOME=/app/.cache/hf \
+      -e MPLCONFIGDIR=/app/.cache/mpl -e PYTHONPATH=/app -e PYTHONUNBUFFERED=1 \
+      -e OMP_NUM_THREADS=22 -e BENCH_SVM_MAX_ITER="${BENCH_SVM_MAX_ITER:-20000000}" \
+      -v "$PWD:/app" -w /app vision-cls:bench \
+      python3 bench/train_ml.py --model svm --task "$task" --features raw \
+          --tier tier1-classical 2>&1 \
     | grep -vE "^==|CUDA Version|Container image|governed by|By pulling|developer.nvidia|copy of this license|NVIDIA Driver was not detected|Container Toolkit|docs.nvidia.com" \
-    | tail -12
+    | tail -14
 done
 echo "SVM LANE DONE $(date +%H:%M:%S)"
