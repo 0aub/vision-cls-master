@@ -47,6 +47,9 @@ def rows(task):
             except Exception:
                 pass
         out.append({"model": p[2], "tier": tier,
+                    "arch": cfg.get("model", p[2]),
+                    "protocol": cfg.get("protocol", "uniform"),
+                    "train_mode": cfg.get("train_mode", ""),
                     "source": cfg.get("source", ""),
                     "has_ckpt": os.path.exists(os.path.join(d, "best.pth")),
                     "test_acc": float(pd.read_csv(st).accuracy.iloc[0]),
@@ -66,6 +69,10 @@ def main():
     ap.add_argument("--source", default=None, help="filter on run_config source")
     ap.add_argument("--needs_ckpt", action="store_true",
                     help="only runs that saved a best.pth (Grad-CAM, CV)")
+    ap.add_argument("--protocol", default=None, help="uniform | tuned")
+    ap.add_argument("--field", default="model", choices=["model", "arch"],
+                    help="'model' = run-directory name, 'arch' = the architecture "
+                         "the run_config names (what --model expects)")
     args = ap.parse_args()
     df = rows(args.task)
     if df.empty:
@@ -80,10 +87,13 @@ def main():
         df = df[df.source == args.source]
     if args.needs_ckpt:
         df = df[df.has_ckpt]
+    if args.protocol:
+        df = df[df.protocol == args.protocol]
+    df = df[df.tier != "hpo-sweep"]
     # tagged so the shell drivers can pull names out of the container's stdout,
     # which also carries the CUDA image banner
-    for m in df.sort_values(args.by, ascending=False).model.head(args.top):
-        print("PICK\t" + m)
+    for m in df.sort_values(args.by, ascending=False)[args.field].head(args.top):
+        print("PICK\t" + str(m))
 
 
 if __name__ == "__main__":

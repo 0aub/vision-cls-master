@@ -73,25 +73,36 @@ phase_C() {
 
 phase_D() {
   stamp "PHASE D start"
-  BEST=$(PICK --task 5class --deep --source torchvision --top 1)
+  # the loss comparison sits on top of the tuned recipe, so it isolates the
+  # objective rather than re-measuring the protocol mismatch
+  RECIPES=$(./bench-cpu.sh python3 bench/hpo_select.py 2>/dev/null | sed -n 's/^RECIPE\t//p')
+  rec() { echo "$RECIPES" | awk -F'\t' -v t="$1" '$1==t{print $2}'; }
+  BEST=$(PICK --task 5class --deep --source torchvision --field arch --top 1)
   BACKBONES="efficientnet_b0"
-  [ "$BEST" != "efficientnet_b0" ] && BACKBONES="$BACKBONES $BEST"
+  [ -n "$BEST" ] && [ "$BEST" != "efficientnet_b0" ] && BACKBONES="$BACKBONES $BEST"
   for bb in $BACKBONES; do
+    T=$(./bench-cpu.sh python3 bench/tier_of.py "$bb" 2>/dev/null | sed -n 's/^TIER\t//p')
+    R=$(rec "${T:-tier2-classic-cnn}")
     for v in ce weighted_ce focal cb; do
       GPU python3 bench/train_dl.py --model $bb --task 5class --epochs 100 \
-          --loss $v --tier phaseD-longtail --name "${bb}__${v}"
+          --loss $v --tier phaseD-longtail --protocol tuned \
+          --name "${bb}__${v}" $R
     done
     GPU python3 bench/train_dl.py --model $bb --task 5class --epochs 100 \
-        --loss ce --sampler weighted --tier phaseD-longtail --name "${bb}__sampler"
+        --loss ce --sampler weighted --tier phaseD-longtail --protocol tuned \
+        --name "${bb}__sampler" $R
   done
+  R5=$(rec tier5-foundation)
   for v in ce weighted_ce focal cb; do
     GPU python3 bench/train_dl.py --model dinov2_vitb14 --source hub-dinov2 \
         --train_mode lora --task 5class --epochs 50 --loss $v \
-        --tier phaseD-longtail --name "dinov2_vitb14_lora__${v}"
+        --tier phaseD-longtail --protocol tuned \
+        --name "dinov2_vitb14_lora__${v}" $R5
   done
   GPU python3 bench/train_dl.py --model dinov2_vitb14 --source hub-dinov2 \
       --train_mode lora --task 5class --epochs 50 --loss ce --sampler weighted \
-      --tier phaseD-longtail --name "dinov2_vitb14_lora__sampler"
+      --tier phaseD-longtail --protocol tuned \
+      --name "dinov2_vitb14_lora__sampler" $R5
   CPU python3 bench/longtail.py --models $BACKBONES dinov2_vitb14_lora
   stamp "PHASE D end"
 }
@@ -99,9 +110,9 @@ phase_D() {
 phase_S() {
   stamp "STATS start"
   for task in 5class binary; do
-    CNN=$(PICK --task $task --tier tier2-classic-cnn --needs_ckpt --top 1)
-    EFF=$(PICK --task $task --tier tier3-efficient-cnn --needs_ckpt --top 1)
-    TRF=$(PICK --task $task --tier tier4-transformer --needs_ckpt --top 1)
+    CNN=$(PICK --task $task --tier tier2-classic-cnn --needs_ckpt --field arch --top 1)
+    EFF=$(PICK --task $task --tier tier3-efficient-cnn --needs_ckpt --field arch --top 1)
+    TRF=$(PICK --task $task --tier tier4-transformer --needs_ckpt --field arch --top 1)
     echo "### CV $task: $CNN / $EFF / $TRF / dinov2_vitb14(lora) / efficientnet_b0"
     for m in $CNN $EFF $TRF efficientnet_b0; do
       [ -z "$m" ] && continue
