@@ -20,6 +20,7 @@ summary.csv (per model x class x split), and panels/*.png.
 """
 import argparse
 import glob
+import json
 import os
 import sys
 
@@ -107,16 +108,39 @@ def overlay(img01, cam, alpha=0.45):
 # --------------------------------------------------------------------------- #
 # frame sources
 # --------------------------------------------------------------------------- #
-def masked_frames():
+def resolve_run(run_name, task):
+    """A run DIRECTORY name is not an architecture name (Phase D uses
+    <model>__<variant>), so the architecture and source come from the run's own
+    run_config.json rather than from string surgery on the directory name."""
+    d = C.run_dir(task, run_name)
+    ck = os.path.join(d, "best.pth")
+    cfg_p = os.path.join(d, "run_config.json")
+    if not (os.path.exists(ck) and os.path.exists(cfg_p)):
+        return None
+    cfg = json.load(open(cfg_p))
+    return dict(name=cfg.get("model", run_name),
+                source=cfg.get("source", "torchvision"),
+                train_mode=cfg.get("train_mode", "full"),
+                ckpt=ck, image_size=int(cfg.get("image_size", 224)),
+                ringed=False, label=f"{run_name} (clean)")
+
+
+def masked_frames(only_reliable=True):
     df = pd.read_csv(os.path.join(MASKDIR, "bench-lesion-bboxes.csv"))
     rows = []
     for _, r in df.iterrows():
-        mp = os.path.join(MASKDIR, "masks", r["filename"].replace(".bmp", ".png"))
-        if not os.path.exists(mp) or r["v8_split"] == "not-in-V8":
+        stroke = os.path.join(MASKDIR, "masks", r["filename"].replace(".bmp", ".png"))
+        lesion = os.path.join(MASKDIR, "masks_filled", r["filename"].replace(".bmp", ".png"))
+        if not (os.path.exists(stroke) and os.path.exists(lesion)):
+            continue
+        if r["v8_split"] == "not-in-V8":
+            continue
+        if only_reliable and not int(r.get("reliable", 1)):
             continue
         rows.append(dict(filename=r["filename"], split=r["v8_split"], cls=r["class"],
                          source_path=r["source_path"], flip=r["flip_variant"],
-                         knn_row=int(r["knn_row"]), mask_path=mp))
+                         knn_row=int(r["knn_row"]), mask_path=lesion,
+                         stroke_path=stroke))
     return rows
 
 
@@ -161,7 +185,8 @@ def run_model(spec, frames, X_ring, device, panels_wanted, task="5class"):
 
     rows, panels = [], []
     for i, fr in enumerate(frames):
-        mask = np.asarray(Image.open(fr["mask_path"])) > 127
+        mask = np.asarray(Image.open(fr["mask_path"])) > 127        # lesion region
+        stroke = np.asarray(Image.open(fr["stroke_path"])) > 127    # drawn ring
         if spec["ringed"]:
             img01 = ringed_image(X_ring, fr["knn_row"], fr["flip"])
             pil = Image.fromarray((img01 * 255).astype(np.uint8))
@@ -175,12 +200,15 @@ def run_model(spec, frames, X_ring, device, panels_wanted, task="5class"):
         with torch.no_grad():
             pred = int(model(x.detach()).argmax(1).item())
         hit, iou, peak = score_cam(g, mask)
+        hit_s, iou_s, _ = score_cam(g, stroke)
         rows.append(dict(model=spec["label"], ringed=spec["ringed"],
                          filename=fr["filename"], v8_split=fr["split"],
                          **{"class": fr["cls"]}, y_true=y, y_pred=pred,
                          pointing_hit=int(hit), iou_top20=round(iou, 6),
+                         pointing_hit_stroke=int(hit_s),
+                         iou_top20_stroke=round(iou_s, 6),
                          peak_y=int(peak[0]), peak_x=int(peak[1]),
-                         mask_px=int(mask.sum())))
+                         lesion_px=int(mask.sum()), stroke_px=int(stroke.sum())))
         if len(panels) < panels_wanted:
             panels.append((fr, img01, g, mask))
     del cam, model
@@ -206,7 +234,7 @@ def save_panels(bundles, path, title):
             axes[r, 0].set_title("raw frame", fontsize=9)
         axes[r, 1].imshow(b["mask"], cmap="gray")
         if r == 0:
-            axes[r, 1].set_title("clinician ellipse\n(mask)", fontsize=9)
+            axes[r, 1].set_title("clinician ellipse\n(lesion region)", fontsize=9)
         for c, (label, img, cam) in enumerate(b["cams"]):
             axes[r, 2 + c].imshow(overlay(img, cam))
             if r == 0:
@@ -245,18 +273,12 @@ def main():
     print(f"{len(frames)} lesion frames carry a mask", flush=True)
 
     specs = []
-    for m in args.models:
-        ck = os.path.join(C.run_dir(args.task, m), "best.pth")
-        if os.path.exists(ck):
-            specs.append(dict(name=m, source="torchvision", ckpt=ck, image_size=224,
-                              ringed=False, label=f"{m} (clean)", train_mode="full"))
-    if args.dinov2:
-        ck = os.path.join(C.run_dir(args.task, args.dinov2), "best.pth")
-        base = args.dinov2.split("_lora")[0].split("_probe")[0]
-        if os.path.exists(ck):
-            specs.append(dict(name=base, source="hub-dinov2", ckpt=ck, image_size=224,
-                              ringed=False, label=f"{args.dinov2} (clean)",
-                              train_mode="lora" if "lora" in args.dinov2 else "probe"))
+    for run_name in list(args.models) + ([args.dinov2] if args.dinov2 else []):
+        spec = resolve_run(run_name, args.task)
+        if spec:
+            specs.append(spec)
+        else:
+            print(f"[warn] no usable checkpoint for run {run_name!r}; skipped")
     v7 = sorted(glob.glob(V7_CKPT_GLOB))
     if v7:
         specs.append(dict(name="efficientnet_b0", source="v7-legacy", ckpt=v7[0],
@@ -275,28 +297,23 @@ def main():
         df, panels = run_model(spec, frames, X_ring, device, args.panels, args.task)
         all_rows.append(df)
         panel_store[spec["label"]] = panels
-        print(f"    pointing hit-rate {df.pointing_hit.mean():.3f}  "
-              f"mean IoU {df.iou_top20.mean():.3f}", flush=True)
+        print(f"    lesion region: hit-rate {df.pointing_hit.mean():.3f} "
+              f"IoU {df.iou_top20.mean():.3f}   |   drawn ring: "
+              f"hit-rate {df.pointing_hit_stroke.mean():.3f} "
+              f"IoU {df.iou_top20_stroke.mean():.3f}", flush=True)
 
     df = pd.concat(all_rows, ignore_index=True)
     df.to_csv(per_frame_csv, index=False)
 
-    g = (df.groupby(["model", "v8_split", "class"])
-           .agg(n=("pointing_hit", "size"),
-                pointing_hit_rate=("pointing_hit", "mean"),
-                mean_iou_top20=("iou_top20", "mean"))
-           .reset_index().round(4))
-    overall = (df.groupby(["model", "v8_split"])
-                 .agg(n=("pointing_hit", "size"),
-                      pointing_hit_rate=("pointing_hit", "mean"),
-                      mean_iou_top20=("iou_top20", "mean"))
-                 .reset_index().round(4))
+    AGG = dict(n=("pointing_hit", "size"),
+               pointing_hit_rate=("pointing_hit", "mean"),
+               mean_iou_top20=("iou_top20", "mean"),
+               pointing_hit_rate_on_drawn_ring=("pointing_hit_stroke", "mean"),
+               mean_iou_top20_on_drawn_ring=("iou_top20_stroke", "mean"))
+    g = df.groupby(["model", "v8_split", "class"]).agg(**AGG).reset_index().round(4)
+    overall = df.groupby(["model", "v8_split"]).agg(**AGG).reset_index().round(4)
     overall["class"] = "ALL"
-    allsplit = (df.groupby(["model"])
-                  .agg(n=("pointing_hit", "size"),
-                       pointing_hit_rate=("pointing_hit", "mean"),
-                       mean_iou_top20=("iou_top20", "mean"))
-                  .reset_index().round(4))
+    allsplit = df.groupby(["model"]).agg(**AGG).reset_index().round(4)
     allsplit["class"] = "ALL"
     allsplit["v8_split"] = "ALL"
     out = pd.concat([g, overall, allsplit], ignore_index=True)
