@@ -88,10 +88,13 @@ def main():
     print("\n".join(lines))
     # shell-consumable
     for tier, c in chosen.items():
-        print("RECIPE\t%s\t--optimizer %s --lr %s --weight_decay %s "
-              "--warmup_epochs %s --label_smoothing %s --aug %s"
-              % (tier, c["optimizer"], c["lr"], c["weight_decay"],
-                 c["warmup_epochs"], c["label_smoothing"], c["aug"]))
+        # warmup_epochs is an int flag; efficiency.json round-trips it as a float,
+        # and argparse(type=int) rejects "0.0"
+        print("RECIPE\t%s\t--optimizer %s --lr %g --weight_decay %g "
+              "--warmup_epochs %d --label_smoothing %g --aug %s"
+              % (tier, c["optimizer"], float(c["lr"]), float(c["weight_decay"]),
+                 int(float(c["warmup_epochs"])), float(c["label_smoothing"]),
+                 c["aug"]))
 
 
 if __name__ == "__main__":
