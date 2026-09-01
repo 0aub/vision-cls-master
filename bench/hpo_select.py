@@ -65,6 +65,12 @@ def main():
     lines.append("(four for the LoRA tier's learning rate), 50 epochs each, and is then")
     lines.append("applied to every model in that tier.")
     lines.append("")
+    lines.append("The **epoch count is part of the recipe**: a cosine anneal over 50 epochs")
+    lines.append("is a different learning-rate trajectory from the same recipe annealed over")
+    lines.append("100, so Protocol B trains for the 50 epochs the sweep validated. Under")
+    lines.append("Protocol A every architecture but one reached its best validation epoch")
+    lines.append("before epoch 40, so this costs nothing and halves the grid's wall-clock.")
+    lines.append("")
     for base, g in df.groupby("representative"):
         tier = REPRESENTATIVE.get(base, "?")
         g = g.sort_values("val_macro_f1", ascending=False)
@@ -91,10 +97,10 @@ def main():
         # warmup_epochs is an int flag; efficiency.json round-trips it as a float,
         # and argparse(type=int) rejects "0.0"
         print("RECIPE\t%s\t--optimizer %s --lr %g --weight_decay %g "
-              "--warmup_epochs %d --label_smoothing %g --aug %s"
+              "--warmup_epochs %d --label_smoothing %g --aug %s --epochs %d"
               % (tier, c["optimizer"], float(c["lr"]), float(c["weight_decay"]),
                  int(float(c["warmup_epochs"])), float(c["label_smoothing"]),
-                 c["aug"]))
+                 c["aug"], int(float(c["epochs"]))))
 
 
 if __name__ == "__main__":

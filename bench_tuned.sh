@@ -25,8 +25,11 @@ for task in 5class binary; do
   for m in $ORDER; do
     t="${TIER[$m]}"; r=$(recipe_for "$t")
     echo "### [tuned/$task] $m  [$t] $r  $(date +%H:%M:%S)"
+    # --epochs comes from the recipe: the sweep validated a 50-epoch cosine
+    # anneal, and re-annealing the same recipe over 100 epochs is a different
+    # trajectory, so it would not reproduce what validation chose.
     ./bench.sh python3 bench/train_dl.py --model "$m" --task "$task" \
-        --epochs 100 --batch_size 16 --image_size 224 --tier "$t" \
+        --batch_size 16 --image_size 224 --tier "$t" \
         --protocol tuned --name "${m}__tuned" $r 2>&1 \
       | grep -vE "^==|CUDA Version|Container image|governed by|By pulling|developer.nvidia|copy of this license" \
       | grep -vE "^  ep +[0-9]+/" | tail -10
@@ -38,7 +41,7 @@ for task in 5class binary; do
   for bb in dinov2_vits14 dinov2_vitb14; do
     echo "### [tuned/$task] ${bb} LoRA  $r5  $(date +%H:%M:%S)"
     ./bench.sh python3 bench/train_dl.py --model "$bb" --source hub-dinov2 \
-        --train_mode lora --task "$task" --epochs 50 --tier tier5-foundation \
+        --train_mode lora --task "$task" --tier tier5-foundation \
         --protocol tuned --name "${bb}_lora__tuned" $r5 2>&1 \
       | grep -vE "^==|CUDA Version|Container image|governed by|By pulling|developer.nvidia|copy of this license|xFormers|warnings.warn|Using cache" \
       | grep -vE "^  ep +[0-9]+/" | tail -10
