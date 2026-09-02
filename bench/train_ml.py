@@ -113,7 +113,7 @@ def probs_of(model, X, num_classes):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True, choices=ML_MODELS)
-    ap.add_argument("--task", default="5class", choices=["5class", "binary"])
+    ap.add_argument("--task", default="5class", choices=["5class", "binary", "merged4"])
     ap.add_argument("--features", default="raw")
     ap.add_argument("--select", action="store_true",
                     help="tune on val with the grid above (default: library defaults)")

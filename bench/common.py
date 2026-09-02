@@ -28,6 +28,11 @@ SPLITS = ("train", "val", "test")
 EXPECTED_SIZES = {"train": 1916, "val": 221, "test": 226}
 CLASSES_5 = ["AVM", "Erosion", "Normal", "Ulcer", "Xanthoma"]
 CLASSES_BIN = ["Normal", "Lesion"]
+# Erosion and Ulcer are both mucosal breaks differing in depth; the Lewis Score
+# and CECDAI group them, and Ulcer alone has a single training patient. Merging
+# takes the worst-supported class from 1 training patient to 6.
+CLASSES_MERGED4 = ["AVM", "ErosionUlcer", "Normal", "Xanthoma"]
+MERGED4_MAP = {0: 0, 1: 1, 2: 2, 3: 1, 4: 3}   # from the CLASSES_5 index
 NORMAL_INDEX_5 = CLASSES_5.index("Normal")
 SEED = 1998
 IMAGENET_NORM = ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
@@ -67,15 +72,27 @@ def assert_split(data_root=DATA_ROOT):
 # --------------------------------------------------------------------------- #
 # tasks
 # --------------------------------------------------------------------------- #
+TASKS = ("5class", "binary", "merged4")
+
+
 def classes_for(task):
-    return CLASSES_5 if task == "5class" else CLASSES_BIN
+    return {"5class": CLASSES_5, "binary": CLASSES_BIN,
+            "merged4": CLASSES_MERGED4}[task]
+
+
+def map_label(task, y):
+    """CLASSES_5 index -> this task's label."""
+    if task == "5class":
+        return y
+    if task == "binary":
+        return 0 if y == NORMAL_INDEX_5 else 1
+    return MERGED4_MAP[y]
 
 
 def target_transform_for(task):
     if task == "5class":
         return None
-    # binary: Normal -> 0, any lesion class -> 1
-    return lambda y: 0 if y == NORMAL_INDEX_5 else 1
+    return lambda y: map_label(task, y)
 
 
 # --------------------------------------------------------------------------- #
@@ -148,9 +165,49 @@ def image_folder(split, task, tf, data_root=DATA_ROOT):
                        target_transform=target_transform_for(task))
 
 
-def eval_loader(split, task, tf, batch_size=32, workers=4, data_root=DATA_ROOT):
+def train_patients(task, data_root=DATA_ROOT):
+    """Patients appearing anywhere in the TRAIN split, regardless of class."""
+    d = os.path.join(data_root, "train")
+    out = set()
+    for cls in sorted(os.listdir(d)):
+        for fn in os.listdir(os.path.join(d, cls)):
+            p = patient_of(fn)
+            if p.startswith("P_"):
+                out.add(p)
+    return out
+
+
+def leaked_paths(split, data_root=DATA_ROOT):
+    """Eval frames whose PATIENT also appears in train under some other class.
+
+    The published split is patient-disjoint within each class but not globally:
+    P_105 is an AVM and Erosion training patient and an Ulcer test patient, P_90
+    an Erosion training patient and an AVM test patient, P_19 an AVM training
+    patient and a Xanthoma validation patient. Any task that merges classes - and
+    strictly, any task at all - should be able to report numbers with those
+    frames excluded.
+    """
+    tp = train_patients(data_root)
+    d = os.path.join(data_root, split)
+    out = set()
+    for cls in sorted(os.listdir(d)):
+        for fn in sorted(os.listdir(os.path.join(d, cls))):
+            if patient_of(fn) in tp:
+                out.add(os.path.join(d, cls, fn))
+    return out
+
+
+def eval_loader(split, task, tf, batch_size=32, workers=4, data_root=DATA_ROOT,
+                exclude_leaks=False):
     """Unshuffled. preds_*.csv row order == ds.samples order (addendum B1)."""
     ds = image_folder(split, task, tf, data_root)
+    if exclude_leaks and split != "train":
+        bad = leaked_paths(split, data_root)
+        items = [(p, map_label(task, y)) for p, y in ds.samples if p not in bad]
+        ds2 = ListDataset(items, tf)
+        dl = DataLoader(ds2, batch_size=batch_size, shuffle=False,
+                        num_workers=workers, pin_memory=torch.cuda.is_available())
+        return ds2, dl, [p for p, _ in items]
     dl = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=workers,
                     pin_memory=torch.cuda.is_available())
     paths = [p for p, _ in ds.samples]
@@ -212,11 +269,8 @@ def extra_items(extra_dir, task):
 
 
 def labels_of(split, task, data_root=DATA_ROOT):
-    ds = ImageFolder(os.path.join(data_root, split),
-                     target_transform=target_transform_for(task),
-                     loader=lambda p: None)
-    return np.array([t for _, t in ds.samples]) if task == "5class" else \
-        np.array([0 if t == NORMAL_INDEX_5 else 1 for _, t in ds.samples])
+    ds = ImageFolder(os.path.join(data_root, split), loader=lambda p: None)
+    return np.array([map_label(task, t) for _, t in ds.samples])
 
 
 # --------------------------------------------------------------------------- #

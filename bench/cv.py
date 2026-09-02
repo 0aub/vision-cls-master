@@ -134,7 +134,7 @@ def predict(model, items, tf, device, workers):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
-    ap.add_argument("--task", default="5class", choices=["5class", "binary"])
+    ap.add_argument("--task", default="5class", choices=["5class", "binary", "merged4"])
     ap.add_argument("--source", default="torchvision",
                     choices=["torchvision", "hub-dinov2", "open_clip"])
     ap.add_argument("--train_mode", default="full", choices=["full", "probe", "lora"])

@@ -156,7 +156,7 @@ def main():
                     choices=["dinov2-probe", "dinov2-knn", "biomedclip-probe",
                              "biomedclip-zeroshot"])
     ap.add_argument("--backbone", default="dinov2_vitb14")
-    ap.add_argument("--task", default="5class", choices=["5class", "binary"])
+    ap.add_argument("--task", default="5class", choices=["5class", "binary", "merged4"])
     ap.add_argument("--feature_mode", default="cls", choices=["cls", "cls+mean"])
     ap.add_argument("--embed_name", default=None)
     ap.add_argument("--name", default=None)
