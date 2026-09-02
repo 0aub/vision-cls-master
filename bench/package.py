@@ -34,6 +34,9 @@ TOP_LEVEL = [
     "bench-longtail.csv", "bench-longtail-recall.csv",
     "bench-biomedclip-prompts-5class.json", "bench-biomedclip-prompts-binary.json",
     "bench-pareto-5class.png", "bench-pareto-binary.png",
+    "bench-trust-5class.png", "bench-trust-binary.png",
+    "bench-hpo.md", "bench-hpo.json", "bench-hpo-sweep.csv",
+    "bench-longtail-decision.json",
 ]
 RUN_FILES = ("history.csv", "efficiency.json", "run_config.json")
 RUN_GLOBS = ("summary_*.csv", "report_*.csv", "preds_*.csv", "cm_*.csv")
