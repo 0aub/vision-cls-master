@@ -162,7 +162,26 @@ def build_cam(model, layers, rt):
                        use_cuda=torch.cuda.is_available())
 
 
-def run_model(spec, frames, X_ring, device, panels_wanted, task="5class"):
+def panel_indices(frames, wanted, prefer_split="test"):
+    """Choose which frames illustrate the figure: held-out frames first, spread
+    across the lesion classes, rather than whatever happens to be first in the
+    mask CSV (which is almost all training AVM)."""
+    by_cls = {}
+    for i, f in enumerate(frames):
+        if f["split"] == prefer_split:
+            by_cls.setdefault(f["cls"], []).append(i)
+    if not by_cls:
+        for i, f in enumerate(frames):
+            by_cls.setdefault(f["cls"], []).append(i)
+    picked, order = [], sorted(by_cls)
+    while len(picked) < wanted and any(by_cls.values()):
+        for c in order:
+            if by_cls.get(c) and len(picked) < wanted:
+                picked.append(by_cls[c].pop(0))
+    return picked
+
+
+def run_model(spec, frames, X_ring, device, panel_idx, task="5class"):
     """spec: dict(name=, source=, ckpt=, image_size=, ringed=, label=)"""
     from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
     classes = C.classes_for(task)
@@ -209,7 +228,7 @@ def run_model(spec, frames, X_ring, device, panels_wanted, task="5class"):
                          iou_top20_stroke=round(iou_s, 6),
                          peak_y=int(peak[0]), peak_x=int(peak[1]),
                          lesion_px=int(mask.sum()), stroke_px=int(stroke.sum())))
-        if len(panels) < panels_wanted:
+        if i in panel_idx:
             panels.append((fr, img01, g, mask))
     del cam, model
     torch.cuda.empty_cache()
@@ -255,6 +274,9 @@ def main():
     ap.add_argument("--dinov2", default=None, help="a DINOv2 run name to include")
     ap.add_argument("--task", default="5class")
     ap.add_argument("--panels", type=int, default=8)
+    ap.add_argument("--panel_split", default="test",
+                    choices=["test", "val", "train"],
+                    help="which split the qualitative panels are drawn from")
     ap.add_argument("--limit", type=int, default=0, help="debug: only N frames")
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
@@ -301,10 +323,14 @@ def main():
         print(f"loading ringed pixels from {pkl} ...", flush=True)
         X_ring = M.load_fit_matrix(pkl)
 
+    panel_idx = set(panel_indices(frames, args.panels, args.panel_split))
+    print(f"panel frames ({args.panel_split} split preferred): "
+          + ", ".join(f"{frames[i]['cls']}/{frames[i]['split']}" for i in sorted(panel_idx)),
+          flush=True)
     all_rows, panel_store = [], {}
     for spec in specs:
         print(f"--- Grad-CAM: {spec['label']}", flush=True)
-        df, panels = run_model(spec, frames, X_ring, device, args.panels, args.task)
+        df, panels = run_model(spec, frames, X_ring, device, panel_idx, args.task)
         all_rows.append(df)
         panel_store[spec["label"]] = panels
         print(f"    lesion region: hit-rate {df.pointing_hit.mean():.3f} "
@@ -333,7 +359,7 @@ def main():
     # qualitative panels: same frames, every model side by side
     labels = list(panel_store.keys())
     bundles = []
-    for i in range(min(args.panels, len(frames))):
+    for i in range(len(panel_store[labels[0]])):
         fr, img01, _, mask = panel_store[labels[0]][i]
         cams = []
         for lab in labels:
