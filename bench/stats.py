@@ -91,11 +91,17 @@ def mcnemar_pair(a, b):
     return n10, n01, float(res.statistic), float(res.pvalue)
 
 
+# the five real tiers; the sweep cells and the Phase D loss variants are not
+# tiers and must not appear as "tier winners"
+REAL_TIERS = ("tier1-classical", "tier2-classic-cnn", "tier3-efficient-cnn",
+              "tier4-transformer", "tier5-foundation")
+
+
 def pick_winners(task):
     """Best run per tier, by test accuracy."""
     best = {}
     for t, name, d, eff in iter_runs():
-        if t != task:
+        if t != task or (eff.get("tier") or "") not in REAL_TIERS:
             continue
         s = pd.read_csv(os.path.join(d, "summary_test.csv"))
         acc = float(s.accuracy.iloc[0])
