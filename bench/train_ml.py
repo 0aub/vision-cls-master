@@ -47,10 +47,14 @@ def make_model(name, params=None, raw_pixels=False):
     from src.modules import get_ml_model
     m = get_ml_model(name)
     if name == "svm" and raw_pixels:
-        # A 150,528-dimension RBF SVM is the most expensive cell in the grid.
-        # A larger kernel cache keeps the whole Gram matrix resident, and a
-        # finite SMO bound guarantees the cell terminates; whether it converged
-        # is recorded in efficiency.json and reported, never hidden.
+        # THE fix for this cell. With sklearn's default 200 MB kernel cache the
+        # fit ran 9 h 50 m without finishing; with 2 GB it converges in ~1 min.
+        # The reason is dimensionality, not problem size: every cache miss costs
+        # a fresh kernel row, O(n_samples x 150,528) = ~3e8 multiply-adds, so
+        # libsvm's shrinking heuristic thrashing the cache is ruinous here even
+        # though the Gram matrix itself is small. Measured n_iter_ is 204-1374,
+        # so the SMO bound below is a safety net that never binds; both it and
+        # the convergence flag are recorded in efficiency.json.
         m.set_params(cache_size=2000, max_iter=SVM_MAX_ITER)
         # SVC(probability=True) refits the model five more times for Platt
         # scaling. On 150,528 raw dimensions that is hours, and it changes only
@@ -194,6 +198,15 @@ def main():
         "train_wallclock_min": round(fit_s / 60.0, 3),
         "feature_extraction_min": round(feat_s / 60.0, 3),
         "selected_params": chosen, "val_selected": bool(args.select),
+        "svm_n_iter": ([int(v) for v in np.atleast_1d(model.n_iter_)]
+                       if getattr(model, "n_iter_", None) is not None else None),
+        "svm_max_iter_budget": SVM_MAX_ITER if (args.model == "svm" and raw) else None,
+        "svm_cache_size_mb": (getattr(model, "cache_size", None)
+                              if (args.model == "svm" and raw) else None),
+        "svm_converged": (bool(np.all(np.atleast_1d(model.n_iter_) < SVM_MAX_ITER))
+                          if (args.model == "svm" and raw
+                              and getattr(model, "n_iter_", None) is not None)
+                          else None),
         "svm_probability_note": ("softmax(decision_function): SVC(probability=True) "
                                  "is intractable on 150,528 raw dims and does not "
                                  "change predictions")
