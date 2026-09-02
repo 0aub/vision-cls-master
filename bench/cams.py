@@ -281,9 +281,19 @@ def main():
             print(f"[warn] no usable checkpoint for run {run_name!r}; skipped")
     v7 = sorted(glob.glob(V7_CKPT_GLOB))
     if v7:
+        # The same ring-trained checkpoint on BOTH inputs. Scoring it only on
+        # ringed frames cannot demonstrate shortcut learning, because the
+        # clinician drew the ellipse around the lesion - firing on the stroke
+        # lands inside the lesion region anyway, which is why it posts the
+        # highest plain pointing-game hit rate of any model. The causal test is
+        # the paired one: strip the ring from the input and see whether its
+        # localisation collapses while a clean-trained model's does not.
         specs.append(dict(name="efficientnet_b0", source="v7-legacy", ckpt=v7[0],
                           image_size=256, ringed=True,
-                          label="efficientnet_b0 v7 (ring-trained, ringed input)"))
+                          label="efficientnet_b0 v7 ring-trained (RINGED input)"))
+        specs.append(dict(name="efficientnet_b0", source="v7-legacy", ckpt=v7[0],
+                          image_size=256, ringed=False,
+                          label="efficientnet_b0 v7 ring-trained (CLEAN input)"))
 
     X_ring = None
     if any(s["ringed"] for s in specs):
