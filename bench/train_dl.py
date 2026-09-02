@@ -87,7 +87,9 @@ def train_one(args, out_dir, device):
                                 train_mode=args.train_mode,
                                 feature_mode=args.feature_mode,
                                 lora_r=args.lora_r, lora_alpha=args.lora_alpha,
-                                lora_dropout=args.lora_dropout).to(device)
+                                lora_dropout=args.lora_dropout,
+                                attention=args.attention,
+                                attention_index=args.attention_index).to(device)
             _, tl = C.train_loader(args.task, tf_train, batch_size=batch,
                                    workers=args.workers, sampler=sampler,
                                    extra_dir=args.extra_train_dir)
@@ -215,6 +217,10 @@ def main():
     ap.add_argument("--loss", default="ce",
                     choices=["ce", "weighted_ce", "focal", "cb", "sampler"])
     ap.add_argument("--sampler", default="none", choices=["none", "weighted"])
+    ap.add_argument("--attention", default=None,
+                    help="insert one of src/modules.py's attention blocks "
+                         "(se_layer, cbam, eca, simam, ...) - Track C")
+    ap.add_argument("--attention_index", type=int, default=4)
     ap.add_argument("--extra_train_dir", default=None,
                     help="extra class-foldered training images (Phase E copy-paste); "
                          "train split only, never val or test")
@@ -278,7 +284,8 @@ def main():
 
     eff = EFF.measure_all(model, args.image_size, skip_cpu=args.skip_cpu_latency)
     eff.update(meta)
-    eff.update({"extra_train_dir": args.extra_train_dir, "protocol": args.protocol, "optimizer": args.optimizer, "weight_decay": args.weight_decay,
+    eff.update({"attention": args.attention,
+                "extra_train_dir": args.extra_train_dir, "protocol": args.protocol, "optimizer": args.optimizer, "weight_decay": args.weight_decay,
                 "warmup_epochs": args.warmup_epochs,
                 "label_smoothing": args.label_smoothing, "aug": args.aug,
                 "select_on": args.select_on,

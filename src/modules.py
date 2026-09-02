@@ -1212,10 +1212,13 @@ def load_biomedclip():
 
 
 def build_model(name, num_classes, source="torchvision", train_mode="full",
-                feature_mode="cls", lora_r=8, lora_alpha=16, lora_dropout=0.05):
+                feature_mode="cls", lora_r=8, lora_alpha=16, lora_dropout=0.05,
+                attention=None, attention_index=4):
     """The single entry point the benchmark runner uses."""
     if source == "torchvision":
         model = base_model(name.lower())
+        if attention:
+            add_attention_tail(model, attention.lower())
         set_head(model, num_classes)
         if train_mode == "full":
             for p in model.parameters():
@@ -1262,3 +1265,43 @@ def build_model(name, num_classes, source="torchvision", train_mode="full",
         return BackboneWithHead(_Vis(visual), dim, num_classes, kind="clip")
 
     raise ValueError(f"unknown model source {source!r}")
+
+
+def add_attention_tail(model, attention_name, image_size=224):
+    """Insert an attention block on the final feature map, architecture-agnostic.
+
+    The original add_attention() indexes into model.features and reads
+    .out_channels, which only holds for backbones whose features are a flat list
+    of Conv2d - true for the 2024 grid, false for efficientnet_v2, convnext and
+    anything using Sequential stages. This instead finds the feature extractor,
+    runs one dummy forward to discover its output width, and appends the
+    attention block after it, so the same call works across families.
+
+    Returns the channel count the block was built for.
+    """
+    holder, attr = None, None
+    for a in ("features", "layer4"):
+        if hasattr(model, a):
+            holder, attr = model, a
+            break
+    if holder is None:
+        raise ValueError(f"no feature extractor found on {type(model).__name__}")
+
+    feat = getattr(holder, attr)
+    was_training = model.training
+    model.eval()
+    with torch.no_grad():
+        if attr == "layer4":                       # resnet-style: run the stem too
+            x = torch.zeros(1, 3, image_size, image_size)
+            for name, m in model.named_children():
+                x = m(x)
+                if name == attr:
+                    break
+            ch = x.shape[1]
+        else:
+            ch = feat(torch.zeros(1, 3, image_size, image_size)).shape[1]
+    model.train(was_training)
+
+    att = get_attention(attention_name, channels=ch)
+    setattr(holder, attr, nn.Sequential(feat, att))
+    return ch
