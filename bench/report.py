@@ -20,7 +20,8 @@ from bench import common as C                                      # noqa: E402
 
 LOG = C.LOG_ROOT
 TIER_ORDER = ["tier1-classical", "tier2-classic-cnn", "tier3-efficient-cnn",
-              "tier4-transformer", "tier5-foundation", "phaseD-longtail", "unlabelled"]
+              "tier4-transformer", "tier5-foundation", "phaseD-longtail",
+              "phaseE-copypaste", "unlabelled"]
 TIER_TITLE = {
     "tier1-classical": "Tier 1 - classical ML",
     "tier2-classic-cnn": "Tier 2 - classic CNNs",
@@ -28,6 +29,7 @@ TIER_TITLE = {
     "tier4-transformer": "Tier 4 - supervised transformers",
     "tier5-foundation": "Tier 5 - foundation models",
     "phaseD-longtail": "Phase D - long-tail objectives (5-class)",
+    "phaseE-copypaste": "Phase E - lesion copy-paste augmentation (5-class)",
     "unlabelled": "Unlabelled",
 }
 
@@ -244,6 +246,10 @@ def main():
     w("")
     w(csv_md(os.path.join(LOG, "bench-longtail-recall.csv")))
     w("")
+
+    w("## 5b. Lesion copy-paste augmentation (Phase E, module M3c)")
+    w("")
+    w(read_txt(os.path.join(LOG, "bench-phaseE.md"), missing="  (not run)\n"))
 
     w("## 6. Localization faithfulness (Phase C, module M3)")
     w("")

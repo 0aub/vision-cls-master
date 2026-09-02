@@ -157,8 +157,16 @@ def eval_loader(split, task, tf, batch_size=32, workers=4, data_root=DATA_ROOT):
     return ds, dl, paths
 
 
-def train_loader(task, tf, batch_size=16, workers=4, data_root=DATA_ROOT, sampler=None):
-    ds = image_folder("train", task, tf, data_root)
+def train_loader(task, tf, batch_size=16, workers=4, data_root=DATA_ROOT, sampler=None,
+                 extra_dir=None):
+    base = image_folder("train", task, tf, data_root)
+    extra = extra_items(extra_dir, task)
+    if extra:
+        items = [(p, (y if task == "5class" else (0 if y == NORMAL_INDEX_5 else 1)))
+                 for p, y in base.samples] + extra
+        ds = ListDataset(items, tf)
+    else:
+        ds = base
     g = torch.Generator()
     g.manual_seed(SEED)
     if sampler is not None:
@@ -168,6 +176,39 @@ def train_loader(task, tf, batch_size=16, workers=4, data_root=DATA_ROOT, sample
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=workers,
                         pin_memory=torch.cuda.is_available(), generator=g, drop_last=False)
     return ds, dl
+
+
+class ListDataset(torch.utils.data.Dataset):
+    """(path, label) pairs, for training sets assembled from more than one tree."""
+
+    def __init__(self, items, transform):
+        self.items = items
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.items)
+
+    def __getitem__(self, i):
+        from PIL import Image
+        p, y = self.items[i]
+        with Image.open(p) as im:
+            return self.transform(im.convert("RGB")), y
+
+
+def extra_items(extra_dir, task):
+    """Class-foldered images outside data/splitted, mapped to this task's labels."""
+    items = []
+    if not extra_dir or not os.path.isdir(extra_dir):
+        return items
+    for cls in sorted(os.listdir(extra_dir)):
+        d = os.path.join(extra_dir, cls)
+        if not os.path.isdir(d) or cls not in CLASSES_5:
+            continue
+        y = CLASSES_5.index(cls) if task == "5class" else (0 if cls == "Normal" else 1)
+        for fn in sorted(os.listdir(d)):
+            if fn.lower().endswith((".png", ".bmp", ".jpg", ".jpeg")):
+                items.append((os.path.join(d, fn), y))
+    return items
 
 
 def labels_of(split, task, data_root=DATA_ROOT):

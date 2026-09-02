@@ -68,6 +68,10 @@ def train_one(args, out_dir, device):
 
     train_ds_probe = C.image_folder("train", args.task, tf_eval)
     train_labels = [t for _, t in train_ds_probe.samples]
+    if args.task == "binary":
+        train_labels = [0 if t == C.NORMAL_INDEX_5 else 1 for t in train_labels]
+    # Phase E: synthetic copy-paste frames join the TRAIN split only
+    train_labels += [y for _, y in C.extra_items(args.extra_train_dir, args.task)]
 
     sampler = None
     if args.sampler == "weighted":
@@ -85,7 +89,8 @@ def train_one(args, out_dir, device):
                                 lora_r=args.lora_r, lora_alpha=args.lora_alpha,
                                 lora_dropout=args.lora_dropout).to(device)
             _, tl = C.train_loader(args.task, tf_train, batch_size=batch,
-                                   workers=args.workers, sampler=sampler)
+                                   workers=args.workers, sampler=sampler,
+                                   extra_dir=args.extra_train_dir)
             _, vl, _ = C.eval_loader("val", args.task, tf_eval,
                                      batch_size=max(batch, 16), workers=args.workers)
             criterion, loss_weights = L.build_criterion(
@@ -210,6 +215,9 @@ def main():
     ap.add_argument("--loss", default="ce",
                     choices=["ce", "weighted_ce", "focal", "cb", "sampler"])
     ap.add_argument("--sampler", default="none", choices=["none", "weighted"])
+    ap.add_argument("--extra_train_dir", default=None,
+                    help="extra class-foldered training images (Phase E copy-paste); "
+                         "train split only, never val or test")
     ap.add_argument("--protocol", default="uniform",
                     choices=["uniform", "tuned", "sweep"],
                     help="'uniform' = the brief's one-recipe-for-everything grid; "
@@ -270,7 +278,7 @@ def main():
 
     eff = EFF.measure_all(model, args.image_size, skip_cpu=args.skip_cpu_latency)
     eff.update(meta)
-    eff.update({"protocol": args.protocol, "optimizer": args.optimizer, "weight_decay": args.weight_decay,
+    eff.update({"extra_train_dir": args.extra_train_dir, "protocol": args.protocol, "optimizer": args.optimizer, "weight_decay": args.weight_decay,
                 "warmup_epochs": args.warmup_epochs,
                 "label_smoothing": args.label_smoothing, "aug": args.aug,
                 "select_on": args.select_on,
