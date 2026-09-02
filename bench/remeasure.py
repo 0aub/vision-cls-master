@@ -45,7 +45,7 @@ def runs():
         if not os.path.isdir(d) or "smoke_" in base or base.startswith("bench-cv-"):
             continue
         p = base.split("-", 2)
-        if len(p) < 3 or p[1] not in ("5class", "binary"):
+        if len(p) < 3 or p[1] not in C.TASKS:
             continue
         ef = os.path.join(d, "efficiency.json")
         cf = os.path.join(d, "run_config.json")

@@ -57,7 +57,7 @@ def panel(ax, df, xcol, xlabel, logx=True):
 
 def main():
     df = collect()
-    for task in ("5class", "binary"):
+    for task in C.TASKS:
         sub = df[df.task == task]
         if sub.empty:
             continue
@@ -84,7 +84,7 @@ def main():
     if not (os.path.exists(rel) and os.path.exists(cov)):
         return
     R, V = pd.read_csv(rel), pd.read_csv(cov)
-    for task in ("5class", "binary"):
+    for task in C.TASKS:
         sub = df[(df.task == task)].sort_values("test_acc", ascending=False)
         winners = (sub.groupby("tier").head(1).model.tolist())
         if not winners:

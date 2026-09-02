@@ -32,9 +32,8 @@ TOP_LEVEL = [
     "bench-trust.csv", "bench-reliability.csv", "bench-coverage.csv",
     "bench-bootstrap-ci.csv", "bench-mcnemar.txt", "bench-mcnemar.csv",
     "bench-longtail.csv", "bench-longtail-recall.csv",
-    "bench-biomedclip-prompts-5class.json", "bench-biomedclip-prompts-binary.json",
-    "bench-pareto-5class.png", "bench-pareto-binary.png",
-    "bench-trust-5class.png", "bench-trust-binary.png",
+    "bench-cv-summary.csv", "bench-patient-leaks.csv", "bench-leakfree.csv",
+    "bench-phaseE.md", "bench-copypaste-examples.png", "bench-v21-inspect.png",
     "bench-hpo.md", "bench-hpo.json", "bench-hpo-sweep.csv",
     "bench-longtail-decision.json",
 ]
@@ -50,7 +49,7 @@ def tier_winners():
         if not os.path.isdir(d) or "smoke_" in base or base.startswith("bench-cv-"):
             continue
         parts = base.split("-", 2)
-        if len(parts) < 3 or parts[1] not in ("5class", "binary"):
+        if len(parts) < 3 or parts[1] not in C.TASKS:
             continue
         st = os.path.join(d, "summary_test.csv")
         ef = os.path.join(d, "efficiency.json")
@@ -80,7 +79,10 @@ def build(out, include_probs=True):
     winners = tier_winners()
     seen = set()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
-        for f in TOP_LEVEL:
+        per_task = [t.format(task=t2) for t2 in C.TASKS for t in
+                    ("bench-biomedclip-prompts-{task}.json", "bench-pareto-{task}.png",
+                     "bench-trust-{task}.png")]
+        for f in TOP_LEVEL + per_task:
             add(z, os.path.join(LOG, f), f"log/{f}", seen)
         for d in sorted(glob.glob(os.path.join(LOG, "bench-*"))):
             if not os.path.isdir(d):

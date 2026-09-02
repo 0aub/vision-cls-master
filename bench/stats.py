@@ -31,7 +31,7 @@ def iter_runs(pattern="log/bench-*"):
         if not os.path.isdir(d) or not base.startswith("bench-") or "smoke_" in base:
             continue
         parts = base.split("-", 2)
-        if len(parts) < 3 or parts[1] not in ("5class", "binary"):
+        if len(parts) < 3 or parts[1] not in C.TASKS:
             continue
         f = os.path.join(d, "preds_test.csv")
         if not os.path.exists(f):
@@ -113,7 +113,7 @@ def pick_winners(task):
 
 def run_mcnemar(out_txt, out_csv):
     rows, lines = [], []
-    for task in ("5class", "binary"):
+    for task in C.TASKS:
         best = pick_winners(task)
         if len(best) < 2:
             continue

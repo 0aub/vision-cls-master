@@ -41,7 +41,7 @@ def collect():
         if not os.path.isdir(d) or "smoke_" in base or base.startswith("bench-cv-"):
             continue
         parts = base.split("-", 2)
-        if len(parts) < 3 or parts[1] not in ("5class", "binary"):
+        if len(parts) < 3 or parts[1] not in C.TASKS:
             continue
         task, name = parts[1], parts[2]
         st = os.path.join(d, "summary_test.csv")
@@ -156,7 +156,12 @@ def main():
     w("|---|---|")
     w("| dataset | `data/splitted/V8-KAUHC`, patient-disjoint, seed 1998 |")
     w("| split | train 1916 / val 221 / test 226 (verified against the archived composition CSV at every run) |")
-    w("| tasks | `5class` (AVM, Erosion, Normal, Ulcer, Xanthoma) and `binary` (Normal vs Lesion) |")
+    w("| tasks | `5class` (AVM, Erosion, Normal, Ulcer, Xanthoma), `binary` (Normal vs Lesion), "
+      "and `merged4` (AVM, Erosion+Ulcer, Normal, Xanthoma) |")
+    w("| why merged4 | Erosion and Ulcer are both mucosal breaks differing in depth; the Lewis Score "
+      "and CECDAI group them. Ulcer alone has ONE training patient and 86% of every Ulcer frame in "
+      "the archive belongs to it, so 5-class Ulcer is not learnable; merging pools 4 Ulcer patients "
+      "with 8 Erosion patients. |")
     w("| input | 224x224, ImageNet normalisation (DINOv2 runs use the official DINOv2 eval transform) |")
     w("| training | full fine-tuning, Adam lr 1e-4, cosine schedule, 100 epochs, batch 16 |")
     w("| augmentation | random horizontal + vertical flip, train split only |")
@@ -213,6 +218,8 @@ def main():
         w(leaderboard(df, "5class"))
         w("### 3.2 Binary (lesion detection)")
         w(leaderboard(df, "binary"))
+    w("### 3.4 merged4 (Erosion+Ulcer merged)")
+    w(leaderboard(df, "merged4"))
     w("### 3.3 Hyper-parameter sweep (per-tier recipe selection)")
     w("")
     w(read_txt(os.path.join(LOG, "bench-hpo.md"), missing="  (not yet run)\n"))
@@ -227,7 +234,7 @@ def main():
               ["task", "model", "train_mode", "test_acc", "test_macro_f1",
                "params_M", "trainable_M", "gflops", "gpu_ms_b1"]))
         w("")
-        for task in ("5class", "binary"):
+        for task in C.TASKS:
             p = os.path.join(LOG, f"bench-biomedclip-prompts-{task}.json")
             if os.path.exists(p):
                 w(f"**BiomedCLIP zero-shot prompts ({task})** - all prompts, as required:")
@@ -301,12 +308,13 @@ def main():
 
     w("## 8. Patient-grouped 4-fold cross-validation")
     w("")
-    cvs = sorted(glob.glob(os.path.join(LOG, "bench-cv-*", "cv_summary.csv")))
-    if not cvs:
-        w("  (not yet run)")
-    else:
-        w(pd.concat([pd.read_csv(f) for f in cvs], ignore_index=True)
-            .round(4).to_markdown(index=False))
+    w("Per-fold macro F1 covers the classes PRESENT in that fold: a patient-grouped")
+    w("fold can legitimately contain none of a class, and scoring it 0 measures fold")
+    w("composition rather than the model. The pooled out-of-fold figures - every frame")
+    w("predicted exactly once, by a model that never saw that patient - are the")
+    w("headline.")
+    w("")
+    w(csv_md(os.path.join(LOG, "bench-cv-summary.csv")))
     w("")
 
     w("## 9. Significance")
