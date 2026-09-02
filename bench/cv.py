@@ -64,17 +64,33 @@ def pool_all(task, data_root=C.DATA_ROOT):
 
 
 def fit_fold(args, tr_items, va_items, device, num_classes):
-    tf_train, tf_eval = transforms_for(args.source, args.image_size)
+    tf_train, tf_eval = transforms_for(args.source, args.image_size, args.aug)
     tl = DataLoader(ListDataset(tr_items, tf_train), batch_size=args.batch_size,
                     shuffle=True, num_workers=args.workers, pin_memory=True)
     vl = DataLoader(ListDataset(va_items, tf_eval), batch_size=32, shuffle=False,
                     num_workers=args.workers, pin_memory=True)
     model = build_model(args.model, num_classes, source=args.source,
                         train_mode=args.train_mode).to(device)
-    crit, _ = L.build_criterion(args.loss, [y for _, y in tr_items], num_classes, device)
+    crit, _ = L.build_criterion(args.loss, [y for _, y in tr_items], num_classes,
+                                device, label_smoothing=args.label_smoothing)
     crit = crit.to(device)
-    opt = torch.optim.Adam([p for p in model.parameters() if p.requires_grad], lr=args.lr)
-    sch = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
+    params = [p for p in model.parameters() if p.requires_grad]
+    if args.optimizer == "adamw":
+        opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=args.weight_decay)
+    elif args.optimizer == "sgd":
+        opt = torch.optim.SGD(params, lr=args.lr, momentum=0.9,
+                              weight_decay=args.weight_decay)
+    else:
+        opt = torch.optim.Adam(params, lr=args.lr, weight_decay=args.weight_decay)
+    cos = torch.optim.lr_scheduler.CosineAnnealingLR(
+        opt, T_max=max(1, args.epochs - args.warmup_epochs))
+    if args.warmup_epochs > 0:
+        warm = torch.optim.lr_scheduler.LinearLR(opt, start_factor=1e-3,
+                                                 total_iters=args.warmup_epochs)
+        sch = torch.optim.lr_scheduler.SequentialLR(opt, [warm, cos],
+                                                    milestones=[args.warmup_epochs])
+    else:
+        sch = cos
     best_acc, best_sd = -1.0, None
     for ep in range(args.epochs):
         model.train()
@@ -129,6 +145,14 @@ def main():
     ap.add_argument("--image_size", type=int, default=224)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--loss", default="ce")
+    # the cross-validation must train the SAME way the headline grid does, or the
+    # CV numbers describe a model that appears nowhere in the leaderboard
+    ap.add_argument("--optimizer", default="adam", choices=["adam", "adamw", "sgd"])
+    ap.add_argument("--weight_decay", type=float, default=0.0)
+    ap.add_argument("--warmup_epochs", type=int, default=0)
+    ap.add_argument("--label_smoothing", type=float, default=0.0)
+    ap.add_argument("--aug", default="light", choices=["light", "strong"])
+    ap.add_argument("--protocol", default="tuned")
     ap.add_argument("--name", default=None)
     ap.add_argument("--val_frac", type=float, default=0.15)
     ap.add_argument("--force", action="store_true")
@@ -171,7 +195,7 @@ def main():
         tr_items = [items[i] for i in tr_sel]
         va_items = [items[i] for i in va_sel]
         te_items = [items[i] for i in te_idx]
-        tf = transforms_for(args.source, args.image_size)[1]
+        tf = transforms_for(args.source, args.image_size, args.aug)[1]
         tf0 = time.time()
         model, val_acc = fit_fold(args, tr_items, va_items, device, K)
         P, Y = predict(model, te_items, tf, device, args.workers)
@@ -201,6 +225,10 @@ def main():
                   "y_pred": oof_p.argmax(1)}).to_csv(
         os.path.join(out_dir, "oof_predictions.csv"), index=False)
     summ = {"model": name, "task": args.task, "folds": args.folds,
+            "protocol": args.protocol, "optimizer": args.optimizer, "lr": args.lr,
+            "weight_decay": args.weight_decay, "warmup_epochs": args.warmup_epochs,
+            "label_smoothing": args.label_smoothing, "aug": args.aug,
+            "epochs": args.epochs,
             "grouping": "patient-disjoint GroupKFold; Normal frames are frame-level "
                         "(one group each), matching the published split",
             "mean_test_accuracy": round(float(fdf.test_accuracy.mean()), 6),

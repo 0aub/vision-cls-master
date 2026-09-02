@@ -109,6 +109,9 @@ phase_D() {
 
 phase_S() {
   stamp "STATS start"
+  # cross-validate under the same per-tier recipe the headline grid uses
+  RECIPES=$(./bench-cpu.sh python3 bench/hpo_select.py 2>/dev/null | sed -n 's/^RECIPE\t//p')
+  rec() { echo "$RECIPES" | awk -F'\t' -v t="$1" '$1==t{print $2}'; }
   for task in 5class binary; do
     CNN=$(PICK --task $task --tier tier2-classic-cnn --needs_ckpt --field arch --top 1)
     EFF=$(PICK --task $task --tier tier3-efficient-cnn --needs_ckpt --field arch --top 1)
@@ -116,10 +119,12 @@ phase_S() {
     echo "### CV $task: $CNN / $EFF / $TRF / dinov2_vitb14(lora) / efficientnet_b0"
     for m in $CNN $EFF $TRF efficientnet_b0; do
       [ -z "$m" ] && continue
-      GPU python3 bench/cv.py --model "$m" --task $task --epochs 100
+      T=$(./bench-cpu.sh python3 bench/tier_of.py "$m" 2>/dev/null | sed -n 's/^TIER\t//p')
+      GPU python3 bench/cv.py --model "$m" --task $task $(rec "${T:-tier2-classic-cnn}")
     done
     GPU python3 bench/cv.py --model dinov2_vitb14 --source hub-dinov2 \
-        --train_mode lora --task $task --epochs 50 --name dinov2_vitb14_lora
+        --train_mode lora --task $task --name dinov2_vitb14_lora \
+        $(rec tier5-foundation)
   done
   CPU python3 bench/stats.py --bootstrap --mcnemar
   stamp "STATS end"
