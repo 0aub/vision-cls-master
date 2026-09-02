@@ -59,5 +59,22 @@ PROMPTS_BINARY = {
 }
 
 
+# merged4: Erosion and Ulcer become one "mucosal break" class, so the prompt set
+# spans both depths rather than pooling the two separate sets.
+PROMPTS_MERGED4 = {
+    "AVM": PROMPTS_5CLASS["AVM"],
+    "ErosionUlcer": [
+        "a wireless capsule endoscopy image of a small bowel mucosal break",
+        "an endoscopy image showing an ulcer or erosion of the small intestine",
+        "capsule endoscopy frame with a break in the mucosal surface, superficial or excavated",
+        "small bowel mucosa with an ulcerative or erosive lesion and surrounding inflammation",
+        "a photograph of a small intestinal mucosal break seen during capsule endoscopy",
+    ],
+    "Normal": PROMPTS_5CLASS["Normal"],
+    "Xanthoma": PROMPTS_5CLASS["Xanthoma"],
+}
+
+
 def prompts_for(task):
-    return PROMPTS_5CLASS if task == "5class" else PROMPTS_BINARY
+    return {"5class": PROMPTS_5CLASS, "binary": PROMPTS_BINARY,
+            "merged4": PROMPTS_MERGED4}[task]
