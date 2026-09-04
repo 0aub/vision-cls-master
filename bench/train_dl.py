@@ -89,7 +89,8 @@ def train_one(args, out_dir, device):
                                 lora_r=args.lora_r, lora_alpha=args.lora_alpha,
                                 lora_dropout=args.lora_dropout,
                                 attention=args.attention,
-                                attention_index=args.attention_index).to(device)
+                                attention_index=args.attention_index,
+                                image_size=args.image_size).to(device)
             _, tl = C.train_loader(args.task, tf_train, batch_size=batch,
                                    workers=args.workers, sampler=sampler,
                                    extra_dir=args.extra_train_dir)
@@ -206,7 +207,7 @@ def main():
     ap.add_argument("--model", required=True)
     ap.add_argument("--task", default="5class", choices=["5class", "binary", "merged4"])
     ap.add_argument("--source", default="torchvision",
-                    choices=["torchvision", "hub-dinov2", "open_clip"])
+                    choices=["torchvision", "hub-dinov2", "open_clip", "timm"])
     ap.add_argument("--train_mode", default="full", choices=["full", "probe", "lora"])
     ap.add_argument("--feature_mode", default="cls", choices=["cls", "cls+mean"])
     ap.add_argument("--epochs", type=int, default=100)

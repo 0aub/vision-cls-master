@@ -2,6 +2,11 @@
 # foundation-model, efficiency and explainability phases need.
 FROM vision-cls:timm
 
+# ultralytics pulls full opencv, which needs libGL / libglib at import time
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip3 install --no-cache-dir \
       fvcore==0.1.5.post20221221 \
       thop \
@@ -14,7 +19,9 @@ RUN pip3 install --no-cache-dir \
       tqdm \
       opencv-python-headless \
       transformers \
-      torchmetrics
+      torchmetrics \
+      pycocotools \
+      ultralytics
 
 ENV PYTHONPATH=/app \
     TORCH_HOME=/app/.cache/torch \

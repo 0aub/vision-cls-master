@@ -1213,7 +1213,7 @@ def load_biomedclip():
 
 def build_model(name, num_classes, source="torchvision", train_mode="full",
                 feature_mode="cls", lora_r=8, lora_alpha=16, lora_dropout=0.05,
-                attention=None, attention_index=4):
+                attention=None, attention_index=4, image_size=224):
     """The single entry point the benchmark runner uses."""
     if source == "torchvision":
         model = base_model(name.lower())
@@ -1233,6 +1233,10 @@ def build_model(name, num_classes, source="torchvision", train_mode="full",
         else:
             raise ValueError(f"train_mode {train_mode!r} is not supported for torchvision models")
         return model
+
+    if source == "timm":
+        return load_timm(name, num_classes, image_size=image_size,
+                         train_mode=train_mode)
 
     if source == "hub-dinov2":
         backbone, dim = load_dinov2(name)
@@ -1305,3 +1309,42 @@ def add_attention_tail(model, attention_name, image_size=224):
     att = get_attention(attention_name, channels=ch)
     setattr(holder, attr, nn.Sequential(feat, att))
     return ch
+
+
+# --------------------------------------------------------------------------- #
+# timm source: the only way to run ViT/Swin above 224
+# --------------------------------------------------------------------------- #
+# torchvision's vit_b_16, swin_* and maxvit_t hard-require 224x224, which is why
+# the v2 grid fixed that resolution everywhere. timm's ViTs interpolate their
+# positional embeddings, so the same pretrained weights can be fine-tuned at any
+# size - which is the only way to ask whether the transformer tier was being
+# limited by its patch grid rather than by its capacity.
+TIMM_ALIASES = {
+    "vit_b_16": "vit_base_patch16_224.augreg2_in21k_ft_in1k",
+    "vit_s_16": "vit_small_patch16_224.augreg_in21k_ft_in1k",
+    "swin_t": "swin_tiny_patch4_window7_224.ms_in1k",
+    "swin_s": "swin_small_patch4_window7_224.ms_in1k",
+    "deit3_s": "deit3_small_patch16_224.fb_in22k_ft_in1k",
+    "convnext_tiny": "convnext_tiny.fb_in22k_ft_in1k",
+}
+
+
+def load_timm(name, num_classes, image_size=224, train_mode="full"):
+    """Pretrained timm backbone at an arbitrary input size."""
+    import timm
+    model_id = TIMM_ALIASES.get(name, name)
+    kwargs = dict(pretrained=True, num_classes=num_classes)
+    try:
+        model = timm.create_model(model_id, img_size=image_size, **kwargs)
+    except TypeError:
+        # not every architecture takes img_size (pure conv nets do not need it)
+        model = timm.create_model(model_id, **kwargs)
+    if train_mode == "probe":
+        for p in model.parameters():
+            p.requires_grad = False
+        for p in model.get_classifier().parameters():
+            p.requires_grad = True
+    else:
+        for p in model.parameters():
+            p.requires_grad = True
+    return model

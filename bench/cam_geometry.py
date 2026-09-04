@@ -30,7 +30,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bench import common as C                                      # noqa: E402
 
 CAM = os.path.join(C.LOG_ROOT, "bench-cam")
-MASKDIR = os.path.join(C.LOG_ROOT, "bench-lesion-masks")
+MASKDIR = os.environ.get("BENCH_MASKDIR",
+                         os.path.join(C.LOG_ROOT, "bench-lesion-masks"))
 CORE_FRAC = 0.5          # erode by half the region's equivalent radius
 
 

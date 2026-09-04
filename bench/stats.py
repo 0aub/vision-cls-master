@@ -56,12 +56,25 @@ def bootstrap(out_csv):
         n = len(y)
         idx = rng.integers(0, n, size=(N_BOOT, n))
         accs = (y[idx] == p[idx]).mean(axis=1)
-        f1s = np.empty(N_BOOT)
         K = len(C.classes_for(task))
         labels = list(range(K))
-        for b in range(N_BOOT):
-            f1s[b] = f1_score(y[idx[b]], p[idx[b]], average="macro",
-                              zero_division=0, labels=labels)
+        # Vectorised macro F1 over all resamples at once. The per-resample
+        # sklearn call was 10,000 python-level calls per run and blocked the
+        # queue for hours; this counts TP/FP/FN with bincount on the flattened
+        # resample index and is numerically identical.
+        yb, pb = y[idx], p[idx]
+        tp = np.zeros((N_BOOT, K)); fp = np.zeros((N_BOOT, K)); fn = np.zeros((N_BOOT, K))
+        rows = np.repeat(np.arange(N_BOOT), n)
+        for c in range(K):
+            tp[:, c] = np.bincount(rows, weights=((yb == c) & (pb == c)).ravel(),
+                                   minlength=N_BOOT)
+            fp[:, c] = np.bincount(rows, weights=((yb != c) & (pb == c)).ravel(),
+                                   minlength=N_BOOT)
+            fn[:, c] = np.bincount(rows, weights=((yb == c) & (pb != c)).ravel(),
+                                   minlength=N_BOOT)
+        denom = 2 * tp + fp + fn
+        f1c = np.divide(2 * tp, denom, out=np.zeros_like(tp), where=denom > 0)
+        f1s = f1c.mean(axis=1)
         rows.append({
             "task": task, "model": name, "tier": eff.get("tier", ""), "n_test": n,
             "accuracy": round(float(accuracy_score(y, p)), 6),

@@ -111,6 +111,10 @@ def main():
                 "fill_method": method,
                 "reliable": int(filled.mean() <= MAX_RELIABLE_FRAC),
                 "mask_size": SIZE, "match_l2": round(float(D[r, c]), 4),
+                # the ringed frame is a real file here, not a row in the 2024
+                # pickle; cams.py reads it directly. knn_row stays -1 to mark
+                # "not from the pickle" and must never be used as an index.
+                "ringed_path": os.path.relpath(rp[r], "."),
                 "knn_row": -1,
             })
         del A, B, D, clean

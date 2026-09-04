@@ -67,12 +67,16 @@ def pool_all(task, data_root=C.DATA_ROOT):
 
 def fit_fold(args, tr_items, va_items, device, num_classes):
     tf_train, tf_eval = transforms_for(args.source, args.image_size, args.aug)
-    tl = DataLoader(ListDataset(tr_items, tf_train), batch_size=args.batch_size,
+    items = list(tr_items) + C.extra_items(getattr(args, "extra_train_dir", None),
+                                          args.task)
+    tl = DataLoader(ListDataset(items, tf_train), batch_size=args.batch_size,
                     shuffle=True, num_workers=args.workers, pin_memory=True)
     vl = DataLoader(ListDataset(va_items, tf_eval), batch_size=32, shuffle=False,
                     num_workers=args.workers, pin_memory=True)
     model = build_model(args.model, num_classes, source=args.source,
-                        train_mode=args.train_mode).to(device)
+                        train_mode=args.train_mode,
+                        attention=getattr(args, "attention", None),
+                        image_size=args.image_size).to(device)
     crit, _ = L.build_criterion(args.loss, [y for _, y in tr_items], num_classes,
                                 device, label_smoothing=args.label_smoothing)
     crit = crit.to(device)
@@ -138,7 +142,7 @@ def main():
     ap.add_argument("--model", required=True)
     ap.add_argument("--task", default="5class", choices=["5class", "binary", "merged4"])
     ap.add_argument("--source", default="torchvision",
-                    choices=["torchvision", "hub-dinov2", "open_clip"])
+                    choices=["torchvision", "hub-dinov2", "open_clip", "timm"])
     ap.add_argument("--train_mode", default="full", choices=["full", "probe", "lora"])
     ap.add_argument("--folds", type=int, default=4)
     ap.add_argument("--epochs", type=int, default=100)
@@ -155,6 +159,9 @@ def main():
     ap.add_argument("--label_smoothing", type=float, default=0.0)
     ap.add_argument("--aug", default="light", choices=["light", "strong"])
     ap.add_argument("--protocol", default="tuned")
+    ap.add_argument("--attention", default=None)
+    ap.add_argument("--extra_train_dir", default=None,
+                    help="synthetic frames appended to each fold's TRAIN side only")
     ap.add_argument("--name", default=None)
     ap.add_argument("--val_frac", type=float, default=0.15)
     ap.add_argument("--force", action="store_true")

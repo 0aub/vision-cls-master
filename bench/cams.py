@@ -35,7 +35,8 @@ from bench import masks as M                                       # noqa: E402
 from src.modules import build_model, pretrained_network            # noqa: E402
 
 OUT = os.path.join(C.LOG_ROOT, "bench-cam")
-MASKDIR = os.path.join(C.LOG_ROOT, "bench-lesion-masks")
+MASKDIR = os.environ.get("BENCH_MASKDIR",
+                         os.path.join(C.LOG_ROOT, "bench-lesion-masks"))
 V7_CKPT_GLOB = "archive/log/v7-efficientnet_b0 */best.pth"
 TOP_FRAC = 0.20
 
@@ -140,7 +141,10 @@ def masked_frames(only_reliable=True):
         rows.append(dict(filename=r["filename"], split=r["v8_split"], cls=r["class"],
                          source_path=r["source_path"], flip=r["flip_variant"],
                          knn_row=int(r["knn_row"]), mask_path=lesion,
-                         stroke_path=stroke))
+                         stroke_path=stroke,
+                         ringed_path=(r["ringed_path"]
+                                      if "ringed_path" in r and
+                                      isinstance(r.get("ringed_path"), str) else None)))
     return rows
 
 
@@ -185,7 +189,10 @@ def run_model(spec, frames, X_ring, device, panel_idx, task="5class"):
     """spec: dict(name=, source=, ckpt=, image_size=, ringed=, label=)"""
     from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
     classes = C.classes_for(task)
+    # the archived v7 checkpoint has a 5-class head, so it must be given
+    # 5-class targets no matter which task is being scored
     if spec["source"] == "v7-legacy":
+        classes = C.CLASSES_5
         model = pretrained_network(spec["name"], None, 4, 5)
     else:
         model = build_model(spec["name"], len(classes), source=spec["source"],
@@ -207,8 +214,15 @@ def run_model(spec, frames, X_ring, device, panel_idx, task="5class"):
         mask = np.asarray(Image.open(fr["mask_path"])) > 127        # lesion region
         stroke = np.asarray(Image.open(fr["stroke_path"])) > 127    # drawn ring
         if spec["ringed"]:
-            img01 = ringed_image(X_ring, fr["knn_row"], fr["flip"])
-            pil = Image.fromarray((img01 * 255).astype(np.uint8))
+            if fr.get("ringed_path"):          # V2.1 export: a real file
+                pil = Image.open(fr["ringed_path"]).convert("RGB")
+                img01 = np.asarray(pil.resize((M.SIZE, M.SIZE), Image.BILINEAR),
+                                   np.float32) / 255.0
+            elif fr["knn_row"] >= 0:           # 2024 pickle reconstruction
+                img01 = ringed_image(X_ring, fr["knn_row"], fr["flip"])
+                pil = Image.fromarray((img01 * 255).astype(np.uint8))
+            else:
+                continue                        # no ringed source for this frame
         else:
             pil = Image.open(os.path.join(M.FULL, fr["source_path"])).convert("RGB")
             img01 = np.asarray(pil.resize((M.SIZE, M.SIZE), Image.BILINEAR),
@@ -318,7 +332,9 @@ def main():
                           label="efficientnet_b0 v7 ring-trained (CLEAN input)"))
 
     X_ring = None
-    if any(s["ringed"] for s in specs):
+    needs_pickle = any(sp["ringed"] for sp in specs) and any(
+        (not f.get("ringed_path")) and f["knn_row"] >= 0 for f in frames)
+    if needs_pickle:
         pkl = sorted(glob.glob(M.KNN_GLOB))[0]
         print(f"loading ringed pixels from {pkl} ...", flush=True)
         X_ring = M.load_fit_matrix(pkl)

@@ -28,7 +28,8 @@ from PIL import Image, ImageFilter
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bench import common as C                                      # noqa: E402
 
-MASKDIR = os.path.join(C.LOG_ROOT, "bench-lesion-masks")
+MASKDIR = os.environ.get("BENCH_MASKDIR",
+                         os.path.join(C.LOG_ROOT, "bench-lesion-masks"))
 OUT = "data/synthetic/V8-CP"
 RARE = ["Erosion", "Ulcer", "Xanthoma"]
 
