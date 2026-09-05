@@ -64,13 +64,14 @@ def bootstrap(out_csv):
         # resample index and is numerically identical.
         yb, pb = y[idx], p[idx]
         tp = np.zeros((N_BOOT, K)); fp = np.zeros((N_BOOT, K)); fn = np.zeros((N_BOOT, K))
-        rows = np.repeat(np.arange(N_BOOT), n)
+        # NB: not `rows` - that name is the results accumulator in this function
+        row_idx = np.repeat(np.arange(N_BOOT), n)
         for c in range(K):
-            tp[:, c] = np.bincount(rows, weights=((yb == c) & (pb == c)).ravel(),
+            tp[:, c] = np.bincount(row_idx, weights=((yb == c) & (pb == c)).ravel(),
                                    minlength=N_BOOT)
-            fp[:, c] = np.bincount(rows, weights=((yb != c) & (pb == c)).ravel(),
+            fp[:, c] = np.bincount(row_idx, weights=((yb != c) & (pb == c)).ravel(),
                                    minlength=N_BOOT)
-            fn[:, c] = np.bincount(rows, weights=((yb == c) & (pb != c)).ravel(),
+            fn[:, c] = np.bincount(row_idx, weights=((yb == c) & (pb != c)).ravel(),
                                    minlength=N_BOOT)
         denom = 2 * tp + fp + fn
         f1c = np.divide(2 * tp, denom, out=np.zeros_like(tp), where=denom > 0)

@@ -4,17 +4,25 @@
 # (every step self-skips, so a no-op pass is cheap) and reports idleness loudly.
 set -uo pipefail
 cd "$(dirname "$0")"
-QUEUES=(bench_queue5.sh bench_queue4.sh bench_queue2.sh bench_queue3.sh bench_queue.sh)
+QUEUES=(bench_queue6.sh bench_queue5.sh bench_queue4.sh bench_queue2.sh bench_queue3.sh bench_queue.sh)
 while true; do
   if pgrep -f "[b]ench_queue[0-9]*\.sh" >/dev/null; then sleep 60; continue; fi
   started=""
   for q in "${QUEUES[@]}"; do
     [ -x "$q" ] || continue
-    tag="$(basename "$q" .sh | tr 'a-z' 'A-Z') COMPLETE"
+    # the queues write "QUEUE2 COMPLETE"; basename gives bench_queue2, so the
+    # bench_ prefix has to come off or the tag never matches and the watchdog
+    # restarts a finished queue forever
+    tag="$(basename "$q" .sh | sed 's/^bench_//' | tr 'a-z' 'A-Z') COMPLETE"
     if ! grep -q "$tag" log/bench-progress.txt 2>/dev/null; then
       echo "[watchdog] starting $q  $(date -Iseconds)"
       nohup "./$q" >> "log/$(basename "$q" .sh).log" 2>&1 &
-      started="$q"; sleep 120; break
+      started="$q"; sleep 180
+      if ! pgrep -f "[b]ench_queue[0-9]*\.sh" >/dev/null; then
+        echo "[watchdog] $q exited immediately - marking skipped $(date -Iseconds)"
+        echo "$tag (skipped: exits immediately) $(date -Iseconds)" >> log/bench-progress.txt
+      fi
+      break
     fi
   done
   if [ -z "$started" ]; then
